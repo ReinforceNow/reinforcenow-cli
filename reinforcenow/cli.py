@@ -28,7 +28,7 @@ from reinforcenow.utils import stream_sse_response
 load_dotenv()
 
 # Configuration with production default (can be overridden via .env)
-API_URL = os.getenv("API_URL", "http://api.reinforcenow.ai")
+API_URL = os.getenv("API_URL", "https://api.reinforcenow.ai")
 
 
 def get_template_dir():
