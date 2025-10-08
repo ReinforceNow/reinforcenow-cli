@@ -1,58 +1,21 @@
 import base64
 import json
 import os
+import shutil
 from datetime import datetime
+from pathlib import Path
 
-import boto3
 import click
 import requests
-from botocore.exceptions import ClientError, NoCredentialsError
 
 from reinforcenow.auth import is_authenticated, get_auth_headers, login_flow, validate_token, TOKEN_FILE
 from reinforcenow.utils import stream_sse_response
 
 API_URL = "http://localhost:8000"
 
-# S3 Configuration
-S3_BUCKET = os.getenv("REINMAX_S3_BUCKET", "reinmax-project-templates")
-S3_REGION = os.getenv("REINMAX_S3_REGION", "us-east-1")
-S3_PREFIX = os.getenv("REINMAX_S3_PREFIX", "templates/")
-
-def get_s3_client():
-    """Initialize S3 client with AWS credentials"""
-    try:
-        return boto3.client(
-            's3',
-            region_name=S3_REGION,
-            aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
-            aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
-            aws_session_token=os.getenv("AWS_SESSION_TOKEN")  # Optional, for temporary credentials
-        )
-    except NoCredentialsError:
-        click.echo("AWS credentials not found. Please configure your AWS credentials.")
-        click.echo("You can set them via environment variables:")
-        click.echo("  export AWS_ACCESS_KEY_ID=your_access_key")
-        click.echo("  export AWS_SECRET_ACCESS_KEY=your_secret_key")
-        click.echo("Or use AWS CLI: aws configure")
-        return None
-
-def download_file_from_s3(s3_client, bucket, key, local_path):
-    """Download a file from S3 to local path"""
-    try:
-        s3_client.download_file(bucket, key, local_path)
-        return True
-    except ClientError as e:
-        error_code = e.response['Error']['Code']
-        if error_code == 'NoSuchKey':
-            click.echo(f" File not found in S3: {key}")
-        elif error_code == 'NoSuchBucket':
-            click.echo(f" S3 bucket not found: {bucket}")
-        else:
-            click.echo(f" Error downloading {key}: {e}")
-        return False
-    except Exception as e:
-        click.echo(f" Unexpected error downloading {key}: {e}")
-        return False
+def get_template_dir():
+    """Get the path to the bundled templates directory"""
+    return Path(__file__).parent / "templates"
 
 @click.group()
 def cli():
@@ -123,66 +86,55 @@ def logout():
 
 @cli.command()
 def start():
-    """Pull project template files from S3 bucket"""
+    """Initialize a new project with template files"""
+    project_dir = Path("./project")
+    template_dir = get_template_dir()
+
     # Create project directory
-    os.makedirs("./project", exist_ok=True)
-    
-    # Initialize S3 client
-    s3_client = get_s3_client()
-    if not s3_client:
-        return
-    
-    # List of files to download
-    files_to_download = [
-        "tools.py", 
-        "env.py", 
-        "reward.py", 
-        "project.toml", 
-        "config.json", 
+    project_dir.mkdir(exist_ok=True)
+
+    # List of template files to copy
+    template_files = [
+        "tools.py",
+        "env.py",
+        "reward.py",
+        "project.toml",
+        "config.json",
         "dataset.json"
     ]
-    
-    click.echo(f"📥 Downloading project template files from S3 bucket: {S3_BUCKET}")
-    
+
+    click.echo("📦 Initializing new project with template files...")
+
     success_count = 0
     failed_files = []
-    
-    for filename in files_to_download:
-        s3_key = f"{S3_PREFIX}{filename}"
-        local_path = f"./project/{filename}"
-        
-        click.echo(f"  Downloading {filename}...", nl=False)
-        
-        if download_file_from_s3(s3_client, S3_BUCKET, s3_key, local_path):
-            click.echo(" ")
+
+    for filename in template_files:
+        source = template_dir / filename
+        destination = project_dir / filename
+
+        try:
+            shutil.copy2(source, destination)
+            click.echo(f"  ✓ Created {filename}")
             success_count += 1
-        else:
-            click.echo(" ")
+        except FileNotFoundError:
+            click.echo(f"  ✗ Template not found: {filename}")
             failed_files.append(filename)
-    
+        except Exception as e:
+            click.echo(f"  ✗ Error copying {filename}: {e}")
+            failed_files.append(filename)
+
     # Summary
-    click.echo(f"\n Download Summary:")
-    click.echo(f"   Successfully downloaded: {success_count}/{len(files_to_download)} files")
-    
+    click.echo(f"\n✨ Project initialized!")
+    click.echo(f"   Successfully created: {success_count}/{len(template_files)} files")
+
     if failed_files:
-        click.echo(f"   Failed to download: {', '.join(failed_files)}")
-        click.echo(f"\n Tips:")
-        click.echo(f"  • Check that files exist in S3 bucket: {S3_BUCKET}")
-        click.echo(f"  • Verify S3 prefix: {S3_PREFIX}")
-        click.echo(f"  • Ensure AWS credentials have read access to the bucket")
+        click.echo(f"   Failed to create: {', '.join(failed_files)}")
     else:
-        click.echo(f"   All files downloaded successfully!")
+        click.echo(f"   All files created successfully!")
         click.echo(f"   Files are available in: ./project/")
-    
-    # List downloaded files
-    if success_count > 0:
-        click.echo(f"\n Downloaded files:")
-        for filename in files_to_download:
-            if filename not in failed_files:
-                local_path = f"./project/{filename}"
-                if os.path.exists(local_path):
-                    file_size = os.path.getsize(local_path)
-                    click.echo(f"   {filename} ({file_size} bytes)")
+        click.echo(f"\n📝 Next steps:")
+        click.echo(f"   1. Edit the files in ./project/ to customize your RL environment")
+        click.echo(f"   2. Run 'reinforcenow run' to start training")
 
 @cli.command()
 @click.option('--project_name', required=False)
@@ -216,7 +168,7 @@ def run(params):
                 payload["files"][fname] = f.read()
         except FileNotFoundError:
             click.echo(f" File not found: {file_path}")
-            click.echo(" Run 'reinforcenow start' first to download project template files.")
+            click.echo(" Run 'reinforcenow start' first to initialize project template files.")
             return
         except Exception as e:
             click.echo(f" Error reading {file_path}: {e}")
