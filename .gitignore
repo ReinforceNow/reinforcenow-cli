@@ -13,5 +13,4 @@ wheels/
 project/
 
 # Environment and config
-.env
 .DS_Store
