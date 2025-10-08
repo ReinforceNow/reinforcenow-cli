@@ -8,3 +8,10 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Project workspace directory
+project/
+
+# Environment and config
+.env
+.DS_Store
