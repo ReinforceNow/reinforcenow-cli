@@ -5,16 +5,18 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools]
 packages = ["reinforcenow"]
 
+[tool.setuptools.package-data]
+reinforcenow = ["templates/*"]
+
 [project]
 name = "reinforcenow"
-version = "0.0.1"
+version = "0.0.2"
 description = "ReinforceNow CLI - Reinforcement Learning platform command-line interface"
 readme = "README.md"
 requires-python = ">=3.8"
 dependencies = [
     "click>=8.0.0",
     "requests>=2.25.0",
-    "boto3>=1.20.0",
     "python-dotenv>=0.19.0"
 ]
 

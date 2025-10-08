@@ -1,0 +1,7 @@
+[project]
+name = "my-reinforcement-learning-project"
+version = "0.1.0"
+description = "My RL project"
+
+[settings]
+# Add your project settings here
