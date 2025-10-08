@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "reinforcenow"
+version = "0.0.1"
+description = "ReinforceNow CLI - Reinforcement Learning platform command-line interface"
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = [
+    "click>=8.0.0",
+    "requests>=2.25.0",
+    "boto3>=1.20.0",
+    "python-dotenv>=0.19.0"
+]
+
+[project.optional-dependencies]
+api = ["fastapi>=0.68.0", "uvicorn>=0.15.0"]
+all = ["fastapi>=0.68.0", "uvicorn>=0.15.0"]
+
+[project.scripts]
+reinforcenow = "reinforcenow.cli:cli"
