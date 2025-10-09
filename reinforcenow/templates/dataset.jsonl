@@ -1,3 +1,0 @@
-{"prompt": "What is the capital of France?", "expected": "Paris"}
-{"prompt": "Explain reinforcement learning", "expected": "Reinforcement learning is a type of machine learning..."}
-{"prompt": "Write a hello world program", "expected": "print('Hello, World!')"}

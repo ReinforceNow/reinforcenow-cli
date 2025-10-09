@@ -1,6 +1,17 @@
 {
-  "learning_rate": 0.001,
-  "batch_size": 32,
-  "episodes": 1000,
-  "gamma": 0.99
+  "project_id": "your-project-id",
+  "dataset_id": "your-dataset-id",
+  "organization_id": "your-organization-id",
+  "version": "1.0.0",
+  "params": {
+    "algorithm.adv_estimator": "gae",
+    "data.train_files": ["train.jsonl"],
+    "data.val_files": ["val.jsonl"],
+    "gpus": "0",
+    "model": "meta-llama/Llama-2-7b",
+    "training.learning_rate": 0.001,
+    "training.batch_size": 32,
+    "training.episodes": 1000,
+    "training.gamma": 0.99
+  }
 }
