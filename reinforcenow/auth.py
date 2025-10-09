@@ -22,7 +22,7 @@ USER_AGENT = os.getenv("REINMAX_USER_AGENT", "Reinmax-CLI/1.1")
 
 DEVICE_AUTH_URL = os.getenv("REINMAX_DEVICE_AUTH_URL", f"{BASE_URL}/api/auth/device/code")
 TOKEN_URL = os.getenv("REINMAX_TOKEN_URL", f"{BASE_URL}/api/auth/device/token")
-SESSION_URL = os.getenv("REINMAX_SESSION_URL", f"{BASE_URL}/api/auth/get-session")
+EXCHANGE_URL = os.getenv("REINMAX_EXCHANGE_URL", f"{BASE_URL}/api/auth/exchange-token")
 
 # Files under ~/.reinmax
 TOKEN_DIR = Path.home() / ".reinmax"
@@ -69,14 +69,13 @@ def _decode_jwt_payload(token: str) -> Optional[Dict[str, Any]]:
 
 # === Public helpers ===
 def is_authenticated() -> bool:
-    """Fast check using local token file + lightweight remote validation if possible."""
+    """Check if token exists and hasn't expired."""
     return validate_token()
 
 
 def validate_token() -> bool:
     """
-    Validate token on disk. If it's structurally valid and not obviously expired, we
-    try a lightweight remote call. If remote validation fails with 401, we remove it.
+    Check if token exists and hasn't expired based on local timestamp.
     """
     if not TOKEN_FILE.exists():
         return False
@@ -88,7 +87,7 @@ def validate_token() -> bool:
             TOKEN_FILE.unlink(missing_ok=True)
             return False
 
-        # If token has exp and it's in the past, treat as invalid (no guesswork).
+        # Check expiration using stored expires_at or JWT exp claim
         payload = _decode_jwt_payload(access_token) or {}
         exp = payload.get("exp")
         if isinstance(exp, (int, float)) and exp <= _now_ts():
@@ -96,26 +95,8 @@ def validate_token() -> bool:
             if not maybe_refresh_token():
                 TOKEN_FILE.unlink(missing_ok=True)
                 return False
-            # Re-read after refresh
-            data = _load_json(TOKEN_FILE) or {}
-            access_token = data.get("access_token")
-            if not access_token:
-                return False
 
-        # Remote validation (best-effort). Some backends accept bearer for get-session.
-        headers = {"Authorization": f"Bearer {access_token}", "User-Agent": USER_AGENT}
-        try:
-            resp = requests.get(SESSION_URL, headers=headers, timeout=10)
-            if resp.status_code == 200:
-                return True
-            if resp.status_code == 401:
-                TOKEN_FILE.unlink(missing_ok=True)
-                return False
-            # Non-401: server hiccup → assume token might still be okay.
-            return True
-        except requests.RequestException:
-            # Network issue → assume token *might* be okay so we don't thrash.
-            return True
+        return True
 
     except Exception:
         TOKEN_FILE.unlink(missing_ok=True)
@@ -126,10 +107,11 @@ def maybe_refresh_token() -> bool:
     """
     Attempt refresh if refresh_token is present.
     Returns True if we refreshed, False otherwise.
+    Preserves the old refresh_token if the server doesn't return a new one.
     """
     data = _load_json(TOKEN_FILE) or {}
-    refresh_token = data.get("refresh_token")
-    if not refresh_token:
+    old_refresh_token = data.get("refresh_token")
+    if not old_refresh_token:
         return False
 
     try:
@@ -137,7 +119,7 @@ def maybe_refresh_token() -> bool:
             TOKEN_URL,
             data={
                 "grant_type": "refresh_token",
-                "refresh_token": refresh_token,
+                "refresh_token": old_refresh_token,
                 "client_id": CLIENT_ID,
             },
             headers={
@@ -148,6 +130,9 @@ def maybe_refresh_token() -> bool:
         )
         if tok.status_code == 200:
             token_data = tok.json()
+            # Preserve old refresh_token if server doesn't return a new one
+            if "refresh_token" not in token_data:
+                token_data["refresh_token"] = old_refresh_token
             _save_json(TOKEN_FILE, token_data)
             return True
         # If refresh fails, remove the old token to force a clean login next time.
@@ -164,14 +149,33 @@ def maybe_refresh_token() -> bool:
 def get_auth_headers() -> Dict[str, str]:
     """
     Return Authorization headers or raise a clear RuntimeError if not authenticated.
+    Automatically refreshes token if it expires within 5 minutes (proactive refresh).
     Callers that want graceful behavior can check is_authenticated() first.
     """
     if not TOKEN_FILE.exists():
         raise RuntimeError("Not authenticated. Run `reinforcenow login`.")
+
     data = _load_json(TOKEN_FILE) or {}
     access_token = data.get("access_token")
     if not access_token:
         raise RuntimeError("Not authenticated. Run `reinforcenow login`.")
+
+    # Proactive token refresh: Check if token expires within 5 minutes
+    payload = _decode_jwt_payload(access_token) or {}
+    exp = payload.get("exp")
+    if isinstance(exp, (int, float)):
+        # Refresh if token expires within 5 minutes (300 seconds)
+        if exp <= _now_ts() + 300:
+            if maybe_refresh_token():
+                # Re-read token after refresh
+                data = _load_json(TOKEN_FILE) or {}
+                access_token = data.get("access_token")
+                if not access_token:
+                    raise RuntimeError("Token refresh failed. Run `reinforcenow login`.")
+            else:
+                # Refresh failed, but token might still be valid for a short time
+                pass
+
     return {"Authorization": f"Bearer {access_token}", "User-Agent": USER_AGENT}
 
 
@@ -241,6 +245,39 @@ def begin_device_login() -> Optional[Dict[str, Any]]:
     return pending
 
 
+def _exchange_session_for_jwt(session_token: str) -> Optional[str]:
+    """
+    Exchange a session token for a JWT access token.
+    Returns JWT string or None on failure.
+    """
+    try:
+        resp = requests.post(
+            EXCHANGE_URL,
+            json={"session_token": session_token},
+            headers={"Content-Type": "application/json", "User-Agent": USER_AGENT},
+            timeout=30,
+        )
+        if resp.status_code == 200:
+            jwt_data = resp.json()
+            jwt_token = jwt_data.get("access_token")
+            if jwt_token:
+                print("\033[92m✓ JWT token obtained\033[0m")
+                return jwt_token
+            else:
+                print("\033[91m⚠ Exchange succeeded but no JWT in response\033[0m")
+                return None
+        else:
+            error_data = resp.json() if resp.headers.get("content-type") == "application/json" else {}
+            error_msg = error_data.get("error", f"HTTP {resp.status_code}")
+            print(f"\033[91m⚠ Token exchange failed: {error_msg}\033[0m")
+            print("\033[93mℹ Continuing with session token (may not work with API)\033[0m")
+            return None
+    except Exception as e:
+        print(f"\033[91m⚠ Token exchange error: {str(e)}\033[0m")
+        print("\033[93mℹ Continuing with session token (may not work with API)\033[0m")
+        return None
+
+
 def _poll_for_token_once(device_code: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
     """
     Single poll attempt. Returns (token_data, error_code). error_code may be:
@@ -258,7 +295,15 @@ def _poll_for_token_once(device_code: str) -> Tuple[Optional[Dict[str, Any]], Op
     )
 
     if tok.status_code == 200:
-        return tok.json(), None
+        session_data = tok.json()
+        # Exchange session token for JWT
+        session_token = session_data.get("access_token")
+        if session_token:
+            jwt_token = _exchange_session_for_jwt(session_token)
+            if jwt_token:
+                # Replace session token with JWT
+                session_data["access_token"] = jwt_token
+        return session_data, None
 
     try:
         err_data = tok.json()
