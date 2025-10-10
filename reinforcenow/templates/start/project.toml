@@ -1,0 +1,3 @@
+[project]
+name = "quickstart-sentiment-analysis"
+description = "Quickstart tutorial for sentiment analysis with RLHF"

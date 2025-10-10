@@ -1,0 +1,8 @@
+{"prompt": "This product is amazing! Best purchase ever.", "ground_truth": "positive"}
+{"prompt": "Terrible quality, broke after one day.", "ground_truth": "negative"}
+{"prompt": "The movie was okay, nothing special.", "ground_truth": "neutral"}
+{"prompt": "I love this restaurant, the food is excellent!", "ground_truth": "positive"}
+{"prompt": "Worst customer service I've ever experienced.", "ground_truth": "negative"}
+{"prompt": "It works as expected, no complaints.", "ground_truth": "neutral"}
+{"prompt": "Great value for money, highly recommend!", "ground_truth": "positive"}
+{"prompt": "Poor design and awful performance.", "ground_truth": "negative"}
