@@ -3,31 +3,27 @@
 
 import base64
 import json
-import os
 import time
 import webbrowser
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 import requests
-from dotenv import load_dotenv
 
-# Load .env from current working directory (optional - has defaults)
-load_dotenv()
+# === Production Configuration (hardcoded, no .env dependency) ===
+BASE_URL = "https://www.reinforcenow.ai"
+CLIENT_ID = "better-auth-cli"
+USER_AGENT = "Reinmax-CLI/1.1"
 
-# === Configuration (with sane production defaults; overridable via .env) ===
-BASE_URL = os.getenv("REINMAX_BASE_URL", "https://www.reinforcenow.ai").rstrip("/")
-CLIENT_ID = os.getenv("REINMAX_CLIENT_ID", "better-auth-cli")
-USER_AGENT = os.getenv("REINMAX_USER_AGENT", "Reinmax-CLI/1.1")
-
-DEVICE_AUTH_URL = os.getenv("REINMAX_DEVICE_AUTH_URL", f"{BASE_URL}/api/auth/device/code")
-TOKEN_URL = os.getenv("REINMAX_TOKEN_URL", f"{BASE_URL}/api/auth/device/token")
-EXCHANGE_URL = os.getenv("REINMAX_EXCHANGE_URL", f"{BASE_URL}/api/auth/exchange-token")
+DEVICE_AUTH_URL = f"{BASE_URL}/api/auth/device/code"
+TOKEN_URL = f"{BASE_URL}/api/auth/device/token"
+EXCHANGE_URL = f"{BASE_URL}/api/auth/exchange-token"
 
 # Files under ~/.reinmax
 TOKEN_DIR = Path.home() / ".reinmax"
 TOKEN_FILE = TOKEN_DIR / "token.json"
 PENDING_FILE = TOKEN_DIR / "pending_device.json"
+CONFIG_FILE = TOKEN_DIR / "config.json"  # CLI configuration (active org, etc.)
 
 
 # === Utilities ===
@@ -65,6 +61,29 @@ def _decode_jwt_payload(token: str) -> Optional[Dict[str, Any]]:
         return json.loads(base64.urlsafe_b64decode(payload).decode("utf-8"))
     except Exception:
         return None
+
+
+def get_cli_config() -> Dict[str, Any]:
+    """Get CLI configuration (active organization, etc.)"""
+    return _load_json(CONFIG_FILE) or {}
+
+
+def save_cli_config(config: Dict[str, Any]) -> None:
+    """Save CLI configuration"""
+    _save_json(CONFIG_FILE, config)
+
+
+def get_active_org_from_config() -> Optional[str]:
+    """Get the active organization ID from CLI config"""
+    config = get_cli_config()
+    return config.get("active_organization_id")
+
+
+def set_active_org(org_id: str) -> None:
+    """Set the active organization ID in CLI config"""
+    config = get_cli_config()
+    config["active_organization_id"] = org_id
+    save_cli_config(config)
 
 
 # === Public helpers ===

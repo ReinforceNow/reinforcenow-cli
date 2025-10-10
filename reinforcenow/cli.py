@@ -3,15 +3,14 @@
 
 import base64
 import json
-import os
 import sys
 import shutil
+import secrets
 from datetime import datetime
 from pathlib import Path
 
 import click
 import requests
-from dotenv import load_dotenv
 
 from reinforcenow.auth import (
     is_authenticated,
@@ -21,19 +20,75 @@ from reinforcenow.auth import (
     TOKEN_FILE,
     begin_device_login,
     finish_device_login,
+    get_active_org_from_config,
+    set_active_org,
 )
 from reinforcenow.utils import stream_sse_response
 
-# Load .env from current working directory (optional - has defaults)
-load_dotenv()
-
-# Configuration with production default (can be overridden via .env)
-API_URL = os.getenv("API_URL", "https://api.reinforcenow.ai")
+# Production API URL - hardcoded, no .env dependency
+API_URL = "https://api.reinforcenow.ai"
 
 
 def get_template_dir():
     """Get the path to the bundled templates directory"""
     return Path(__file__).parent / "templates"
+
+
+def generate_cuid():
+    """
+    Generate a CUID-like identifier similar to Prisma's @default(cuid()).
+    Format: lowercase alphanumeric string starting with 'c' followed by 24 random characters.
+    """
+    # CUID format: c + timestamp (8 chars) + counter (4 chars) + fingerprint (4 chars) + random (8 chars)
+    # Simplified version: c + 24 random alphanumeric chars
+    chars = 'abcdefghijklmnopqrstuvwxyz0123456789'
+    random_part = ''.join(secrets.choice(chars) for _ in range(24))
+    return f'c{random_part}'
+
+
+def get_active_organization():
+    """
+    Get the active organization ID.
+    Priority: CLI config > JWT token
+    Returns the organization_id or None if not available.
+    """
+    try:
+        # First, check if user has manually set an active org in CLI config
+        config_org = get_active_org_from_config()
+        if config_org:
+            return config_org
+
+        # Fallback to JWT token's organization_id
+        if not TOKEN_FILE.exists():
+            return None
+
+        with open(TOKEN_FILE) as f:
+            data = json.load(f)
+
+        access_token = data.get("access_token")
+        if not access_token:
+            return None
+
+        # Decode JWT payload (without verification - just reading the claims)
+        parts = access_token.split(".")
+        if len(parts) < 2:
+            return None
+
+        # Add base64 padding if needed
+        payload = parts[1]
+        payload += "=" * (-len(payload) % 4)
+
+        # Decode the payload
+        decoded = base64.urlsafe_b64decode(payload.encode("utf-8"))
+        token_data = json.loads(decoded.decode("utf-8"))
+
+        # Extract organization_id from JWT claims
+        org_id = token_data.get("organization_id")
+        return org_id
+
+    except Exception as e:
+        click.echo(f"Warning: Could not extract organization from token: {e}")
+        return None
 
 
 def _not_logged_in_exit(open_browser: bool = True) -> None:
@@ -53,6 +108,39 @@ def _not_logged_in_exit(open_browser: bool = True) -> None:
     else:
         click.echo("Run: \033[1mreinforceenow login\033[0m")
     sys.exit(1)
+
+
+def require_auth():
+    """
+    Authentication guard decorator/function that ensures user is authenticated.
+    If not authenticated, automatically starts the device login flow and waits for completion.
+
+    This provides a seamless authentication experience - users don't need to run
+    'reinforcenow login' separately, the CLI handles it automatically.
+    """
+    if is_authenticated():
+        return  # Already authenticated, continue
+
+    # Not authenticated - start device login flow and wait
+    click.echo("\033[1m🔐 Authentication required\033[0m\n")
+    click.echo("Starting authentication flow...\n")
+
+    # Start device login flow with wait=True to block until complete
+    exit_code = login_flow(wait=True, force=False)
+
+    if exit_code != 0:
+        click.echo("\n\033[91mAuthentication failed or was cancelled.\033[0m")
+        click.echo("Your command cannot proceed without authentication.\n")
+        sys.exit(1)
+
+    # Verify authentication succeeded
+    if not is_authenticated():
+        click.echo("\n\033[91mAuthentication verification failed.\033[0m")
+        click.echo("Please try running \033[1mreinforceenow login\033[0m manually.\n")
+        sys.exit(1)
+
+    click.echo("\n\033[1m✓ Authentication successful!\033[0m")
+    click.echo("Continuing with your command...\n")
 
 
 @click.group()
@@ -138,10 +226,24 @@ def logout():
 
 @cli.command()
 def start():
-    """Initialize a new project with template files."""
+    """Initialize a quickstart tutorial project with sentiment analysis example."""
+    # Check authentication first to fetch organization
+    require_auth()
+
     project_dir = Path("./project")
     dataset_dir = Path("./dataset")
-    template_dir = get_template_dir()
+    template_dir = get_template_dir() / "start"  # Use start subfolder for quickstart
+
+    # Generate new IDs for project and dataset
+    project_id = generate_cuid()
+    dataset_id = generate_cuid()
+
+    # Fetch active organization
+    organization_id = get_active_organization()
+    if not organization_id:
+        click.echo("\033[91mError: Could not fetch active organization.\033[0m")
+        click.echo("Please ensure you're logged in and have an active organization.")
+        sys.exit(1)
 
     # Create directories
     project_dir.mkdir(exist_ok=True)
@@ -161,7 +263,8 @@ def start():
         "val.jsonl",
     ]
 
-    click.echo("Initializing project with template files...")
+    click.echo("\033[1m🚀 Initializing quickstart tutorial project...\033[0m")
+    click.echo("This will create a sentiment analysis example to get you started.\n")
 
     success_count = 0
     failed_files = []
@@ -173,13 +276,13 @@ def start():
 
         try:
             shutil.copy2(source, destination)
-            click.echo(f"  Created project/{filename}")
+            click.echo(f"  ✓ Created project/{filename}")
             success_count += 1
         except FileNotFoundError:
-            click.echo(f"  Template not found: {filename}")
+            click.echo(f"  ✗ Template not found: {filename}")
             failed_files.append(filename)
         except Exception as e:
-            click.echo(f"  Error copying {filename}: {e}")
+            click.echo(f"  ✗ Error copying {filename}: {e}")
             failed_files.append(filename)
 
     # Copy dataset files
@@ -189,41 +292,358 @@ def start():
 
         try:
             shutil.copy2(source, destination)
-            click.echo(f"  Created dataset/{filename}")
+            click.echo(f"  ✓ Created dataset/{filename}")
             success_count += 1
         except FileNotFoundError:
-            click.echo(f"  Template not found: {filename}")
+            click.echo(f"  ✗ Template not found: {filename}")
             failed_files.append(filename)
         except Exception as e:
-            click.echo(f"  Error copying {filename}: {e}")
+            click.echo(f"  ✗ Error copying {filename}: {e}")
             failed_files.append(filename)
 
     # Summary
     total_files = len(project_files) + len(dataset_files)
-    click.echo(f"\n\033[1mProject initialized.\033[0m")
+    click.echo(f"\n\033[1m✅ Quickstart project initialized!\033[0m")
     click.echo(f"Created: {success_count}/{total_files} files")
 
     if failed_files:
         click.echo(f"Failed: {', '.join(failed_files)}")
         return
 
-    click.echo(f"Project files: ./project/")
-    click.echo(f"Dataset files: ./dataset/")
-    click.echo(f"\nNext steps:")
-    click.echo(f"  1. Edit config.json and set your organization_id")
-    click.echo(f"  2. Edit files in ./project/ and ./dataset/")
-    click.echo(f"  3. Run \033[1mreinforceenow run\033[0m")
-    click.echo(f"     (New project/dataset will be created automatically on first run)")
+    # Update config.json with generated IDs and organization
+    config_file = project_dir / "config.json"
+    try:
+        with open(config_file, "r") as f:
+            config = json.load(f)
+
+        # Update with generated values
+        config["project_id"] = project_id
+        config["dataset_id"] = dataset_id
+        config["organization_id"] = organization_id
+
+        with open(config_file, "w") as f:
+            json.dump(config, f, indent=2)
+
+        click.echo(f"\n\033[1m✓ Configuration updated:\033[0m")
+        click.echo(f"  Project ID: {project_id}")
+        click.echo(f"  Dataset ID: {dataset_id}")
+        click.echo(f"  Organization ID: {organization_id}")
+    except Exception as e:
+        click.echo(f"\n\033[91mWarning: Could not update config.json: {e}\033[0m")
+
+    click.echo(f"\n\033[1m📁 Project structure:\033[0m")
+    click.echo(f"  ./project/     - Your RLHF project files")
+    click.echo(f"  ./dataset/     - Training and validation data")
+    click.echo(f"\n\033[1m📚 Quickstart tutorial:\033[0m")
+    click.echo(f"  This example trains a sentiment analysis model using RLHF.")
+    click.echo(f"  The dataset includes movie/product reviews with labels.")
+    click.echo(f"\n\033[1m🎯 Next steps:\033[0m")
+    click.echo(f"  1. Review the example files in ./project/ and ./dataset/")
+    click.echo(f"  2. Run \033[1mreinforceenow run\033[0m to start training")
+    click.echo(f"  3. Check out the docs at https://docs.reinforcenow.ai")
 
 
-def _ensure_auth_or_launch_login() -> None:
-    """
-    For commands that require auth: if not authenticated,
-    open the auth page and exit immediately (non-blocking).
-    """
-    if is_authenticated():
+@cli.command()
+def orgs():
+    """List and switch between organizations."""
+    require_auth()
+
+    click.echo("\n\033[1mFetching your organizations...\033[0m\n")
+
+    # Fetch organizations from API
+    try:
+        response = requests.get(
+            f"{API_URL}/auth/organizations",
+            headers=get_auth_headers(),
+            timeout=10
+        )
+
+        if response.status_code != 200:
+            click.echo(f"\033[91mError: Could not fetch organizations (status {response.status_code})\033[0m")
+            sys.exit(1)
+
+        data = response.json()
+        organizations = data.get("organizations", [])
+
+        if not organizations:
+            click.echo("\033[91mNo organizations found.\033[0m")
+            sys.exit(1)
+
+        # Get current active org
+        current_org_id = get_active_organization()
+
+        # Build display strings
+        click.echo("\033[1mYour organizations:\033[0m\n")
+        for idx, org in enumerate(organizations, 1):
+            org_id = org.get("id")
+            org_name = org.get("name")
+            org_role = org.get("role")
+            is_current = org_id == current_org_id
+
+            if is_current:
+                click.echo(f"  \033[92m▶ {idx}. {org_name} (role: {org_role}) [CURRENT]\033[0m")
+            else:
+                click.echo(f"    {idx}. {org_name} (role: {org_role})")
+
+        # Interactive selection with arrow keys or number input
+        click.echo()
+        click.echo("\033[1mSelect organization:\033[0m Use ↑/↓ arrow keys and Enter, or type a number")
+
+        # Get current selection index (start with current org)
+        current_idx = next((i for i, org in enumerate(organizations) if org["id"] == current_org_id), 0)
+        selected_idx = current_idx
+
+        # Try to use arrow key selection (Unix-only), fall back to number input
+        arrow_keys_available = False
+        try:
+            import tty
+            import termios
+            arrow_keys_available = True
+        except ImportError:
+            pass
+
+        if arrow_keys_available and sys.stdin.isatty():
+            try:
+                # Try to save terminal settings (will fail if stdin is redirected/piped)
+                old_settings = None
+                try:
+                    old_settings = termios.tcgetattr(sys.stdin)
+                except (OSError, termios.error, Exception) as e:
+                    # stdin is not a real terminal (piped, redirected, etc.)
+                    arrow_keys_available = False
+                    # Don't print error, just fall through to number input
+
+                if old_settings is None:
+                    raise OSError("Terminal not available")
+
+                try:
+                    tty.setcbreak(sys.stdin.fileno())
+
+                    while True:
+                        # Clear previous line and show current selection
+                        sys.stdout.write(f"\r\033[K> {organizations[selected_idx]['name']}")
+                        sys.stdout.flush()
+
+                        # Read key
+                        char = sys.stdin.read(1)
+
+                        # Handle Enter (select)
+                        if char in ('\n', '\r'):
+                            break
+
+                        # Handle Escape sequences (arrow keys)
+                        elif char == '\x1b':
+                            next1 = sys.stdin.read(1)
+                            if next1 == '[':
+                                next2 = sys.stdin.read(1)
+                                if next2 == 'A':  # Up arrow
+                                    selected_idx = max(0, selected_idx - 1)
+                                elif next2 == 'B':  # Down arrow
+                                    selected_idx = min(len(organizations) - 1, selected_idx + 1)
+
+                        # Handle q to quit
+                        elif char in ('q', 'Q'):
+                            sys.stdout.write("\r\033[K")
+                            sys.stdout.flush()
+                            termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
+                            click.echo("Cancelled.")
+                            return
+
+                        # Handle number input (1-9)
+                        elif char.isdigit():
+                            num = int(char)
+                            if 1 <= num <= len(organizations):
+                                selected_idx = num - 1
+                                break
+
+                    # Restore terminal settings
+                    termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
+                    sys.stdout.write("\r\033[K")
+                    sys.stdout.flush()
+
+                except Exception as e:
+                    # Restore terminal on error
+                    try:
+                        termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
+                    except:
+                        pass
+                    # Re-raise to trigger fallback
+                    raise
+
+            except (OSError, ValueError, termios.error, Exception) as e:
+                # Terminal doesn't support raw mode or other error, fall back silently
+                arrow_keys_available = False
+
+        if not arrow_keys_available:
+            # Fallback to simple number input
+            click.echo("(Arrow keys not available - enter a number instead)")
+
+            try:
+                selection = click.prompt(
+                    "Enter number (or 'q' to cancel)",
+                    type=str,
+                    default="",
+                    show_default=False
+                )
+            except (OSError, EOFError):
+                # stdin not available, cannot get input
+                click.echo("\n\033[91mError: Cannot read input in non-interactive mode.\033[0m")
+                click.echo("Please run this command in an interactive terminal.")
+                sys.exit(1)
+
+            if not selection or selection.lower() in ('q', 'quit', 'cancel'):
+                click.echo("Cancelled.")
+                return
+
+            try:
+                selected_idx = int(selection) - 1
+                if selected_idx < 0 or selected_idx >= len(organizations):
+                    click.echo("\033[91mInvalid selection.\033[0m")
+                    sys.exit(1)
+            except ValueError:
+                click.echo("\033[91mInvalid input. Please enter a number.\033[0m")
+                sys.exit(1)
+
+        # Apply selection
+        selected_org = organizations[selected_idx]
+        selected_org_id = selected_org["id"]
+        selected_org_name = selected_org["name"]
+
+        # Don't switch if already active
+        if selected_org_id == current_org_id:
+            click.echo(f"\n\033[1mℹ Already using organization:\033[0m {selected_org_name}")
+            return
+
+        # Set as active organization
+        set_active_org(selected_org_id)
+
+        click.echo(f"\n\033[1m✓ Switched to organization:\033[0m {selected_org_name}")
+        click.echo(f"  Organization ID: {selected_org_id}")
+
+    except requests.RequestException as e:
+        click.echo(f"\033[91mNetwork error: {e}\033[0m")
+        sys.exit(1)
+    except Exception as e:
+        click.echo(f"\033[91mError: {e}\033[0m")
+        sys.exit(1)
+
+
+@cli.command()
+def new():
+    """Create a blank project template for custom use cases."""
+    # Check authentication first to fetch organization
+    require_auth()
+
+    project_dir = Path("./project")
+    dataset_dir = Path("./dataset")
+    template_dir = get_template_dir() / "new"  # Use new subfolder for blank template
+
+    # Generate new IDs for project and dataset
+    project_id = generate_cuid()
+    dataset_id = generate_cuid()
+
+    # Fetch active organization
+    organization_id = get_active_organization()
+    if not organization_id:
+        click.echo("\033[91mError: Could not fetch active organization.\033[0m")
+        click.echo("Please ensure you're logged in and have an active organization.")
+        sys.exit(1)
+
+    # Create directories
+    project_dir.mkdir(exist_ok=True)
+    dataset_dir.mkdir(exist_ok=True)
+
+    # Project files to copy to ./project/
+    project_files = [
+        "generation.py",
+        "reward_function.py",
+        "config.json",
+        "project.toml",
+    ]
+
+    # Dataset files to copy to ./dataset/
+    dataset_files = [
+        "train.jsonl",
+        "val.jsonl",
+    ]
+
+    click.echo("\033[1m📦 Creating new blank project...\033[0m\n")
+
+    success_count = 0
+    failed_files = []
+
+    # Copy project files
+    for filename in project_files:
+        source = template_dir / filename
+        destination = project_dir / filename
+
+        try:
+            shutil.copy2(source, destination)
+            click.echo(f"  ✓ Created project/{filename}")
+            success_count += 1
+        except FileNotFoundError:
+            click.echo(f"  ✗ Template not found: {filename}")
+            failed_files.append(filename)
+        except Exception as e:
+            click.echo(f"  ✗ Error copying {filename}: {e}")
+            failed_files.append(filename)
+
+    # Copy dataset files
+    for filename in dataset_files:
+        source = template_dir / filename
+        destination = dataset_dir / filename
+
+        try:
+            shutil.copy2(source, destination)
+            click.echo(f"  ✓ Created dataset/{filename}")
+            success_count += 1
+        except FileNotFoundError:
+            click.echo(f"  ✗ Template not found: {filename}")
+            failed_files.append(filename)
+        except Exception as e:
+            click.echo(f"  ✗ Error copying {filename}: {e}")
+            failed_files.append(filename)
+
+    # Summary
+    total_files = len(project_files) + len(dataset_files)
+    click.echo(f"\n\033[1m✅ Project initialized!\033[0m")
+    click.echo(f"Created: {success_count}/{total_files} files")
+
+    if failed_files:
+        click.echo(f"Failed: {', '.join(failed_files)}")
         return
-    _not_logged_in_exit(open_browser=True)
+
+    # Update config.json with generated IDs and organization
+    config_file = project_dir / "config.json"
+    try:
+        with open(config_file, "r") as f:
+            config = json.load(f)
+
+        # Update with generated values
+        config["project_id"] = project_id
+        config["dataset_id"] = dataset_id
+        config["organization_id"] = organization_id
+
+        with open(config_file, "w") as f:
+            json.dump(config, f, indent=2)
+
+        click.echo(f"\n\033[1m✓ Configuration updated:\033[0m")
+        click.echo(f"  Project ID: {project_id}")
+        click.echo(f"  Dataset ID: {dataset_id}")
+        click.echo(f"  Organization ID: {organization_id}")
+    except Exception as e:
+        click.echo(f"\n\033[91mWarning: Could not update config.json: {e}\033[0m")
+
+    click.echo(f"\n\033[1m📁 Project structure:\033[0m")
+    click.echo(f"  ./project/     - Your RLHF project files")
+    click.echo(f"  ./dataset/     - Training and validation data")
+    click.echo(f"\n\033[1m🎯 Next steps:\033[0m")
+    click.echo(f"  1. Edit files in ./project/ and ./dataset/")
+    click.echo(f"  2. Implement your custom generation and reward logic")
+    click.echo(f"  3. Add your training data to ./dataset/")
+    click.echo(f"  4. Run \033[1mreinforceenow run\033[0m to start training")
+
+
 
 
 @cli.command()
@@ -238,15 +658,18 @@ def pull(pull_type, dataset_id, project_id, run_id, dataset_version_id, project_
     """
     Pull files from S3.
 
-    Required: One of --run-id, --project-id, --project-version-id, --dataset-id, or --dataset-version-id
+    Pull by run (easiest):
+      reinforcenow pull --run-id run_xyz123
 
-    Examples:
-      reinforcenow pull --run-id abc123
-      reinforcenow pull --pull-type dataset --dataset-id abc123
-      reinforcenow pull --pull-type project --project-id xyz789
-      reinforcenow pull --project-version-id ver123
+    Pull latest project or dataset (requires both IDs):
+      reinforcenow pull --pull-type project --project-id proj_abc --dataset-id data_xyz
+      reinforcenow pull --pull-type dataset --project-id proj_abc --dataset-id data_xyz
+
+    Pull specific version (requires parent ID):
+      reinforcenow pull --project-id proj_abc --project-version-id ver_123
+      reinforcenow pull --dataset-id data_xyz --dataset-version-id ver_456
     """
-    _ensure_auth_or_launch_login()
+    require_auth()
 
     # Validate at least one ID is provided
     if not any([run_id, project_id, dataset_id, project_version_id, dataset_version_id]):
@@ -319,7 +742,7 @@ def run(project_dir, dataset_dir):
       reinforcenow run
       reinforcenow run --project-dir ./my-project --dataset-dir ./my-data
     """
-    _ensure_auth_or_launch_login()
+    require_auth()
 
     project_path = Path(project_dir)
     dataset_path = Path(dataset_dir)
@@ -438,7 +861,7 @@ def run(project_dir, dataset_dir):
 @click.option("--run-id", required=True, help="Run ID to stop")
 def stop(run_id):
     """Stop a training run."""
-    _ensure_auth_or_launch_login()
+    require_auth()
 
     try:
         response = requests.post(f"{API_URL}/training/stop", json={"run_id": run_id}, headers=get_auth_headers(), timeout=60)
@@ -459,7 +882,7 @@ def download(model_id, output):
       reinforcenow download model_abc123
       reinforcenow download model_abc123 --output ./my-models
     """
-    _ensure_auth_or_launch_login()
+    require_auth()
 
     output_dir = Path(output)
     output_dir.mkdir(parents=True, exist_ok=True)
