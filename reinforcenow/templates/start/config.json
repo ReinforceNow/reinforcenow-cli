@@ -1,6 +1,10 @@
 {
   "project_id": "your-project-id",
+  "project_name": "GSM8K Project",
+  "project_description": "A quickstart tutorial project for training math reasoning models using the GSM8K dataset with RLHF",
   "dataset_id": "your-dataset-id",
+  "dataset_name": "GSM8K Dataset",
+  "dataset_description": "Grade school math word problems for training mathematical reasoning capabilities",
   "organization_id": "your-organization-id",
   "version": "1.0.0",
   "params": {

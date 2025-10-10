@@ -324,8 +324,14 @@ def start():
         with open(config_file, "w") as f:
             json.dump(config, f, indent=2)
 
+        # Get project details from updated config
+        project_name = config.get("project_name", "GSM8K Project")
+        dataset_name = config.get("dataset_name", "GSM8K Dataset")
+
         click.echo(f"\n\033[1m✓ Configuration updated:\033[0m")
+        click.echo(f"  Project Name: {project_name}")
         click.echo(f"  Project ID: {project_id}")
+        click.echo(f"  Dataset Name: {dataset_name}")
         click.echo(f"  Dataset ID: {dataset_id}")
         click.echo(f"  Organization ID: {organization_id}")
     except Exception as e:
@@ -534,6 +540,10 @@ def new():
     # Check authentication first to fetch organization
     require_auth()
 
+    # Prompt for project name
+    click.echo("\033[1m📦 Creating new blank project...\033[0m\n")
+    project_name = click.prompt("\033[1mProject name\033[0m", type=str, default="My RLHF Project")
+
     project_dir = Path("./project")
     dataset_dir = Path("./dataset")
     template_dir = get_template_dir() / "new"  # Use new subfolder for blank template
@@ -567,7 +577,7 @@ def new():
         "val.jsonl",
     ]
 
-    click.echo("\033[1m📦 Creating new blank project...\033[0m\n")
+    click.echo()
 
     success_count = 0
     failed_files = []
@@ -621,6 +631,7 @@ def new():
 
         # Update with generated values
         config["project_id"] = project_id
+        config["project_name"] = project_name
         config["dataset_id"] = dataset_id
         config["organization_id"] = organization_id
 
@@ -628,6 +639,7 @@ def new():
             json.dump(config, f, indent=2)
 
         click.echo(f"\n\033[1m✓ Configuration updated:\033[0m")
+        click.echo(f"  Project Name: {project_name}")
         click.echo(f"  Project ID: {project_id}")
         click.echo(f"  Dataset ID: {dataset_id}")
         click.echo(f"  Organization ID: {organization_id}")
