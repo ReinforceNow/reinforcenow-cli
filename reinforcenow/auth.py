@@ -214,6 +214,11 @@ def poll_and_wait_for_api_key(device_data: Dict[str, Any]) -> int:
         # Got API key!
         if creds:
             save_credentials(creds)
+
+            # Also update CLI config with the organization_id from auth
+            if creds.get('organization_id'):
+                set_active_org(creds['organization_id'])
+
             print("\n\n\033[1m✓ Login successful!\033[0m\n")
             return 0
 

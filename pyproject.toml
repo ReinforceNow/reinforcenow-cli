@@ -10,7 +10,7 @@ reinforcenow = ["templates/*", "templates/start/*", "templates/new/*"]
 
 [project]
 name = "reinforcenow"
-version = "0.5.4"
+version = "0.6.1"
 description = "ReinforceNow CLI - Reinforcement Learning platform command-line interface"
 readme = "README.md"
 requires-python = ">=3.8"

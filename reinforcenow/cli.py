@@ -23,7 +23,7 @@ from reinforcenow.auth import (
 from reinforcenow.utils import stream_sse_response
 
 # API URL - can be overridden with environment variable
-API_URL = os.environ.get("REINFORCENOW_API_URL", "https://api.reinforcenow.ai")
+API_URL = os.environ.get("REINFORCENOW_API_URL", "http://localhost:3000/api")
 
 
 def get_template_dir():
@@ -699,13 +699,16 @@ def run(project_dir, dataset_dir):
     # Extract required fields
     project_id = config.get("project_id", "your-project-id")
     dataset_id = config.get("dataset_id", "your-dataset-id")
-    organization_id = config.get("organization_id")
     version = config.get("version", "1.0.0")
 
+    # Get organization_id from config or fall back to authenticated user's org
+    organization_id = config.get("organization_id")
     if not organization_id or organization_id == "your-organization-id":
-        click.echo("Error: Please set 'organization_id' in config.json")
-        click.echo("The organization_id is required to create or update projects.")
-        sys.exit(1)
+        organization_id = get_active_organization()
+        if not organization_id:
+            click.echo("Error: Could not determine organization ID")
+            click.echo("Please ensure you're logged in and have an active organization.")
+            sys.exit(1)
 
     # Check if using placeholder IDs
     has_placeholders = (project_id == "your-project-id" or dataset_id == "your-dataset-id")
