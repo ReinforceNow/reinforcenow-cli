@@ -1,12 +1,11 @@
 # cli.py
 # ReinforceNow CLI with non-blocking login by default and clear UX
 
-import base64
 import json
 import sys
+import os
 import shutil
 import secrets
-from datetime import datetime
 from pathlib import Path
 
 import click
@@ -16,17 +15,15 @@ from reinforcenow.auth import (
     is_authenticated,
     get_auth_headers,
     login_flow,
-    validate_token,
-    TOKEN_FILE,
-    begin_device_login,
-    finish_device_login,
+    load_credentials,
+    CREDS_FILE,
     get_active_org_from_config,
     set_active_org,
 )
 from reinforcenow.utils import stream_sse_response
 
-# Production API URL - hardcoded, no .env dependency
-API_URL = "https://api.reinforcenow.ai"
+# API URL - can be overridden with environment variable
+API_URL = os.environ.get("REINFORCENOW_API_URL", "https://api.reinforcenow.ai")
 
 
 def get_template_dir():
@@ -49,7 +46,7 @@ def generate_cuid():
 def get_active_organization():
     """
     Get the active organization ID.
-    Priority: CLI config > JWT token
+    Priority: CLI config > credentials file
     Returns the organization_id or None if not available.
     """
     try:
@@ -58,56 +55,12 @@ def get_active_organization():
         if config_org:
             return config_org
 
-        # Fallback to JWT token's organization_id
-        if not TOKEN_FILE.exists():
-            return None
+        # Fallback to credentials file's organization_id
+        creds = load_credentials()
+        return creds.get("organization_id")
 
-        with open(TOKEN_FILE) as f:
-            data = json.load(f)
-
-        access_token = data.get("access_token")
-        if not access_token:
-            return None
-
-        # Decode JWT payload (without verification - just reading the claims)
-        parts = access_token.split(".")
-        if len(parts) < 2:
-            return None
-
-        # Add base64 padding if needed
-        payload = parts[1]
-        payload += "=" * (-len(payload) % 4)
-
-        # Decode the payload
-        decoded = base64.urlsafe_b64decode(payload.encode("utf-8"))
-        token_data = json.loads(decoded.decode("utf-8"))
-
-        # Extract organization_id from JWT claims
-        org_id = token_data.get("organization_id")
-        return org_id
-
-    except Exception as e:
-        click.echo(f"Warning: Could not extract organization from token: {e}")
+    except Exception:
         return None
-
-
-def _not_logged_in_exit(open_browser: bool = True) -> None:
-    """
-    Standardized behavior for commands that require auth:
-    - Tell the user they must log in
-    - Open the device authorization page (non-blocking)
-    - Exit with code 1
-    """
-    click.echo("\033[1mNot authenticated.\033[0m CLI authorization required.\n")
-    if open_browser:
-        pending = begin_device_login()
-        if pending:
-            click.echo("After authorizing, run your command again.\n")
-        else:
-            click.echo("Could not start login flow. Run: \033[1mreinforceenow login\033[0m")
-    else:
-        click.echo("Run: \033[1mreinforceenow login\033[0m")
-    sys.exit(1)
 
 
 def require_auth():
@@ -165,63 +118,33 @@ def login(no_wait: bool, force: bool):
 
 
 @cli.command()
-@click.option("--finish/--no-finish", default=True, help="Try to finish an in-progress device login (one-shot, non-blocking).")
-@click.option("--wait", is_flag=True, help="Finish login and wait until authorization completes.")
-def status(finish: bool, wait: bool):
-    """Check authentication status and (optionally) finish any in-progress device login."""
-    if TOKEN_FILE.exists():
-        click.echo("Checking authentication status...")
-        valid = validate_token()
-        if valid:
-            click.echo("\033[1mAuthenticated\033[0m - token valid")
-
-            # Show token file and decoded expiry (best-effort JWT inspection)
-            try:
-                with open(TOKEN_FILE) as f:
-                    data = json.load(f)
-                access_token = data.get("access_token", "")
-                click.echo(f"Token file: {TOKEN_FILE}")
-
-                if "." in access_token:
-                    try:
-                        parts = access_token.split(".")
-                        if len(parts) >= 2:
-                            payload = parts[1] + "=" * (-len(parts[1]) % 4)
-                            decoded = base64.urlsafe_b64decode(payload.encode("utf-8"))
-                            token_data = json.loads(decoded.decode("utf-8"))
-                            if "exp" in token_data:
-                                exp_timestamp = token_data["exp"]
-                                exp_date = datetime.fromtimestamp(exp_timestamp)
-                                click.echo(f"Token expires: {exp_date}")
-                    except Exception:
-                        pass
-            except Exception as e:
-                click.echo(f"Could not read token details: {e}")
-        else:
-            click.echo("\033[1mNot authenticated\033[0m - token invalid or expired")
+def status():
+    """Check authentication status."""
+    if is_authenticated():
+        try:
+            creds = load_credentials()
+            click.echo("\033[1mAuthenticated\033[0m")
+            click.echo(f"Credentials file: {CREDS_FILE}")
+            click.echo(f"Organization ID: {creds.get('organization_id', 'N/A')}")
+            click.echo(f"User ID: {creds.get('user_id', 'N/A')}")
+        except Exception as e:
+            click.echo(f"\033[1mAuthenticated\033[0m (but could not read details: {e})")
     else:
-        click.echo("\033[1mNot authenticated\033[0m - no token found")
-
-    # Optionally try to finish any pending device login
-    if finish:
-        rc = finish_device_login(wait=wait)
-        if rc == 0:
-            click.echo("Session ready.")
-        else:
-            click.echo("If you just approved, re-run with \033[1m--wait\033[0m to complete.")
+        click.echo("\033[1mNot authenticated\033[0m")
+        click.echo("Run \033[1mreinforceenow login\033[0m to authenticate.")
 
 
 @cli.command()
 def logout():
-    """Clear authentication token."""
-    if TOKEN_FILE.exists():
+    """Clear authentication credentials."""
+    if CREDS_FILE.exists():
         try:
-            TOKEN_FILE.unlink()
-            click.echo("\033[1mLogged out.\033[0m Token removed.")
+            CREDS_FILE.unlink()
+            click.echo("\033[1mLogged out.\033[0m Credentials removed.")
         except Exception as e:
-            click.echo(f"Could not remove token: {e}")
+            click.echo(f"Could not remove credentials: {e}")
     else:
-        click.echo("Already logged out - no token found.")
+        click.echo("Already logged out - no credentials found.")
 
 
 @cli.command()
@@ -830,11 +753,15 @@ def run(project_dir, dataset_dir):
 
     # Upload files and start training (combined in /training/submit)
     try:
+        # Get auth headers but remove Content-Type for multipart upload
+        headers = get_auth_headers()
+        headers.pop('Content-Type', None)  # Let requests set multipart boundary
+
         upload_response = requests.post(
             f"{API_URL}/training/submit",
             data=data,
             files=files,
-            headers=get_auth_headers(),
+            headers=headers,
             stream=True,
             timeout=300
         )
