@@ -582,18 +582,20 @@ def new():
 
 
 @cli.command()
+@click.argument("run_id", required=False, default=None)
 @click.option("--pull-type", type=click.Choice(["dataset", "project", "run"]), default="run", help="Type of pull: dataset, project, or run (default)")
 @click.option("--dataset-id", help="Dataset ID")
 @click.option("--project-id", help="Project ID")
-@click.option("--run-id", help="Run ID")
+@click.option("--run-id", "run_id_option", help="Run ID (alternative to positional argument)")
 @click.option("--dataset-version-id", help="Specific dataset version")
 @click.option("--project-version-id", help="Specific project version")
 @click.option("--update-config", is_flag=True, default=True, help="Update config.json with pulled IDs (default: true)")
-def pull(pull_type, dataset_id, project_id, run_id, dataset_version_id, project_version_id, update_config):
+def pull(run_id, pull_type, dataset_id, project_id, run_id_option, dataset_version_id, project_version_id, update_config):
     """
     Pull files from S3.
 
-    Pull by run (easiest):
+    Pull by run ID (easiest - use positional argument):
+      reinforcenow pull run_xyz123
       reinforcenow pull --run-id run_xyz123
 
     Pull latest project or dataset (requires both IDs):
@@ -606,9 +608,17 @@ def pull(pull_type, dataset_id, project_id, run_id, dataset_version_id, project_
     """
     require_auth()
 
+    # Use positional run_id if provided, otherwise fall back to --run-id option
+    if run_id_option:
+        run_id = run_id_option
+
     # Validate at least one ID is provided
     if not any([run_id, project_id, dataset_id, project_version_id, dataset_version_id]):
-        click.echo("Error: Must provide at least one of: --run-id, --project-id, --project-version-id, --dataset-id, or --dataset-version-id")
+        click.echo("Error: Must provide at least one ID (run ID, project ID, dataset ID, or version ID)")
+        click.echo("Examples:")
+        click.echo("  reinforcenow pull run_xyz123")
+        click.echo("  reinforcenow pull --run-id run_xyz123")
+        click.echo("  reinforcenow pull --project-id proj_abc --dataset-id data_xyz")
         sys.exit(1)
 
     params = {"pull_type": pull_type}
@@ -696,10 +706,46 @@ def run(project_dir, dataset_dir):
         click.echo(f"Error reading config.json: {e}")
         sys.exit(1)
 
+    # Validate configuration parameters
+    params = config.get("params", {})
+
+    # Validate GPUs (max 8)
+    gpus = params.get("gpus", "0")
+    try:
+        # Parse GPU count - can be a number string like "8" or comma-separated like "0,1,2"
+        if isinstance(gpus, str):
+            gpu_count = int(gpus) if gpus.isdigit() else len(gpus.split(","))
+        elif isinstance(gpus, list):
+            gpu_count = len(gpus)
+        else:
+            gpu_count = int(gpus)
+
+        if gpu_count > 8:
+            click.echo(f"\n\033[91mError: Maximum 8 GPUs allowed, but {gpu_count} requested.\033[0m")
+            click.echo("For larger GPU configurations, please contact us at support@reinforcenow.com")
+            sys.exit(1)
+    except Exception:
+        pass  # If we can't parse, let backend handle it
+
+    # Validate advantage estimator
+    adv_estimator = params.get("algorithm.adv_estimator", "gae")
+    valid_estimators = ["gae", "grpo", "reinforce"]
+    if adv_estimator not in valid_estimators:
+        click.echo(f"\n\033[91mError: Invalid advantage estimator '{adv_estimator}'.\033[0m")
+        click.echo(f"Allowed values: {', '.join(valid_estimators)}")
+        sys.exit(1)
+
+    # Validate model
+    model = params.get("model", "")
+    valid_models = ["qwen3-8b", "glm4-9b", "qwen3-30b-a3b", "llama-3.2-3b"]
+    if model and model not in valid_models:
+        click.echo(f"\n\033[91mError: Invalid model '{model}'.\033[0m")
+        click.echo(f"Allowed models: {', '.join(valid_models)}")
+        sys.exit(1)
+
     # Extract required fields
     project_id = config.get("project_id", "your-project-id")
     dataset_id = config.get("dataset_id", "your-dataset-id")
-    version = config.get("version", "1.0.0")
 
     # Get organization_id from config or fall back to authenticated user's org
     organization_id = config.get("organization_id")
@@ -718,20 +764,19 @@ def run(project_dir, dataset_dir):
 
     click.echo(f"\n\033[1mUploading files...\033[0m")
     click.echo(f"Project ID: {project_id}")
-    click.echo(f"Dataset ID: {dataset_id}")
-    click.echo(f"Version: {version}\n")
+    click.echo(f"Dataset ID: {dataset_id}\n")
 
     # Prepare multipart form data for upload
+    # Note: Backend will create new project and dataset versions automatically
     files = []
     file_handles = []  # Track file handles for cleanup
     data = {
         "project_id": project_id,
         "dataset_id": dataset_id,
-        "version": version,
         "organization_id": organization_id,
     }
 
-    # Add project files
+    # Add project files (generation.py is optional)
     project_files = ["config.json", "generation.py", "reward_function.py", "project.toml"]
     for fname in project_files:
         file_path = project_path / fname
@@ -800,16 +845,64 @@ def run(project_dir, dataset_dir):
 
 
 @cli.command()
-@click.option("--run-id", required=True, help="Run ID to stop")
-def stop(run_id):
-    """Stop a training run."""
+@click.argument("run_id", required=False, default=None)
+@click.option("--run-id", "run_id_option", help="Run ID to stop (alternative to positional argument)")
+def stop(run_id, run_id_option):
+    """
+    Stop a training run.
+
+    Examples:
+      reinforcenow stop cmgoe8arz000b025oycviytgu
+      reinforcenow stop --run-id cmgoe8arz000b025oycviytgu
+    """
     require_auth()
 
+    # Use positional run_id if provided, otherwise fall back to --run-id option
+    if run_id_option:
+        run_id = run_id_option
+
+    if not run_id:
+        click.echo("Error: Run ID is required")
+        click.echo("Usage: reinforcenow stop <run_id>")
+        sys.exit(1)
+
+    click.echo(f"\n\033[1mStopping training run...\033[0m")
+    click.echo(f"Run ID: {run_id}\n")
+
     try:
-        response = requests.post(f"{API_URL}/training/stop", json={"run_id": run_id}, headers=get_auth_headers(), timeout=60)
-        click.echo(response.text)
+        response = requests.post(
+            f"{API_URL}/training/stop",
+            json={"run_id": run_id},
+            headers=get_auth_headers(),
+            timeout=60
+        )
+
+        if response.status_code != 200:
+            click.echo(f"\033[91mError: Request failed with status {response.status_code}\033[0m")
+            click.echo(response.text)
+            sys.exit(1)
+
+        result = response.json()
+
+        if result.get("success"):
+            click.echo("\033[1m✓ Training run stopped successfully\033[0m\n")
+            click.echo(f"Run ID: {result.get('run_id')}")
+            click.echo(f"Status: {result.get('status')}")
+            click.echo(f"Duration: {result.get('duration_minutes', 0)} minutes")
+            click.echo(f"Charged amount: ${result.get('charged_amount', 0):.2f}")
+            if result.get('pod_stopped'):
+                click.echo("Pod stopped: Yes")
+        else:
+            click.echo(f"\033[91mFailed to stop training run\033[0m")
+            click.echo(f"Message: {result.get('message', 'Unknown error')}")
+            sys.exit(1)
+
     except requests.RequestException as e:
-        click.echo(f"Network error: {e}")
+        click.echo(f"\033[91mNetwork error: {e}\033[0m")
+        sys.exit(1)
+    except json.JSONDecodeError:
+        click.echo(f"\033[91mError: Invalid JSON response from server\033[0m")
+        click.echo(response.text)
         sys.exit(1)
 
 

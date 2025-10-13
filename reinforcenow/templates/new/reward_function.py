@@ -18,7 +18,7 @@ async def example_reward(args, sample: Sample, **kwargs) -> float:
     Returns:
         Reward score: 1.0 for pass, 0.0 for fail
     """
-    response = sample["response"]
+    response = sample.response
 
     # Example: Simple length-based reward
     # Replace with your actual reward logic

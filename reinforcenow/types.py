@@ -4,23 +4,25 @@ Type definitions for the reward and generation systems.
 Users decorate their functions with @reward_function or @generation to mark them
 for automatic detection and execution.
 """
-from typing import Protocol, Callable, Awaitable, Union, TypedDict, Any, Optional
+from typing import TypedDict, Protocol, Callable, Awaitable, Any, Optional
 
 
 class Sample(TypedDict, total=False):
     """
-    Sample data structure passed to reward functions.
+    Sample data structure for reinforcement learning.
 
-    Attributes:
-        prompt: The input prompt text
-        response: The generated response
-        ground_truth: Optional ground truth label or expected output
-        metadata: Optional additional metadata
+    Users work with these fields:
     """
-    prompt: str
-    response: str
-    ground_truth: Any
-    metadata: dict
+    # User-facing fields
+    prompt: str | list[dict[str, str]]  # Input prompt (text or multimodal)
+    response: str                        # Generated response
+    metadata: dict                       # User metadata
+
+    # Slime adds these automatically (users can read but shouldn't set):
+    tokens: list[int]                   # Tokenized representation
+    response_length: int                # Length of response
+    reward: float | dict[str, Any]      # Computed reward
+    status: Any                         # Generation status
 
 
 class RewardFunction(Protocol):
@@ -39,7 +41,7 @@ class RewardFunction(Protocol):
     def __call__(
         self,
         args,
-        input: Union[Sample, str],
+        input: Sample | str,
         **kwargs
     ) -> Awaitable[float]:
         ...
