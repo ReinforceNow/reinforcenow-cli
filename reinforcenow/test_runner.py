@@ -115,10 +115,10 @@ async def test_sample(
     # Generate response
     if custom_generate_fn:
         # Use custom generator (decorator style)
-        sample = await custom_generate_fn(
-            lambda s: generate_with_openai(client, s, model, temperature, max_tokens),
-            sample
-        )
+        # The decorator takes the base generator and returns a wrapper
+        base_gen = lambda s: generate_with_openai(client, s, model, temperature, max_tokens)
+        wrapped_gen = custom_generate_fn(base_gen)
+        sample = await wrapped_gen(sample)
     else:
         # Use default OpenAI generation
         sample = await generate_with_openai(client, sample, model, temperature, max_tokens)
