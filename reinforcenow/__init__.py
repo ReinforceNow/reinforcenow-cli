@@ -9,6 +9,7 @@ from reinforcenow.types import (
     RewardExecutor,
     GenerationFunction,
     reward_function,
+    reward_aggregator,
     reward_executor,
     generation,
 )
@@ -19,8 +20,9 @@ __all__ = [
     "RewardExecutor",
     "GenerationFunction",
     "reward_function",
+    "reward_aggregator",
     "reward_executor",
     "generation",
 ]
 
-__version__ = "0.7.3"
+__version__ = "0.8.2"
