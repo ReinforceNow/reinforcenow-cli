@@ -18,8 +18,9 @@ async def sentiment_accuracy(args, sample: Sample, **kwargs) -> float:
     Returns:
         Reward score: 1.0 for correct, 0.0 for incorrect
     """
-    response = sample["response"].strip().lower()
-    ground_truth = sample.get("ground_truth", "").lower()
+    response = sample.response.strip().lower()
+    # Get ground_truth from metadata if available
+    ground_truth = sample.metadata.get("ground_truth", "").lower() if hasattr(sample, "metadata") and sample.metadata else ""
 
     # Reward correct predictions
     if response == ground_truth:

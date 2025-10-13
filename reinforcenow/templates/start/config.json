@@ -6,16 +6,11 @@
   "dataset_name": "GSM8K Dataset",
   "dataset_description": "Grade school math word problems for training mathematical reasoning capabilities",
   "organization_id": "your-organization-id",
-  "version": "1.0.0",
   "params": {
-    "algorithm.adv_estimator": "gae",
+    "algorithm.adv_estimator": "grpo",
     "data.train_files": ["train.jsonl"],
     "data.val_files": ["val.jsonl"],
-    "gpus": "0",
-    "model": "gpt-3.5-turbo",
-    "training.learning_rate": 0.0001,
-    "training.batch_size": 8,
-    "training.episodes": 100,
-    "training.gamma": 0.99
+    "gpus": "8",
+    "model": "qwen3-8b"
   }
 }
