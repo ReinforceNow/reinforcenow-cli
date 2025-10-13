@@ -907,6 +907,95 @@ def stop(run_id, run_id_option):
 
 
 @cli.command()
+@click.option("--project-dir", default="./project", help="Project directory (default: ./project)")
+@click.option("--dataset-file", default="./dataset/train.jsonl", help="Dataset file to test (default: ./dataset/train.jsonl)")
+@click.option("--n-samples", default=5, help="Number of samples to test (default: 5)")
+@click.option("--api-key", envvar="OPENAI_API_KEY", help="OpenAI API key (or set OPENAI_API_KEY env var)")
+@click.option("--model", default="gpt-4o-mini", help="OpenAI model to use (default: gpt-4o-mini)")
+@click.option("--temperature", default=0.8, help="Generation temperature (default: 0.8)")
+@click.option("--max-tokens", default=1024, help="Max tokens to generate (default: 1024)")
+def test(project_dir, dataset_file, n_samples, api_key, model, temperature, max_tokens):
+    """
+    Test reward and generation functions locally using OpenAI.
+
+    Tests your reward function and optional generation function on sample data
+    before running expensive training. Uses OpenAI for generation.
+
+    Example:
+      reinforcenow test
+      reinforcenow test --n-samples 10 --model gpt-4o
+      export OPENAI_API_KEY=sk-... && reinforcenow test
+    """
+    from reinforcenow.test_runner import run_test
+    import asyncio
+
+    if not api_key:
+        click.echo("\033[91mError: OpenAI API key required\033[0m")
+        click.echo("Set OPENAI_API_KEY environment variable or use --api-key option")
+        sys.exit(1)
+
+    project_path = Path(project_dir)
+    dataset_path = Path(dataset_file)
+
+    if not project_path.exists():
+        click.echo(f"\033[91mError: Project directory not found: {project_path}\033[0m")
+        sys.exit(1)
+
+    if not dataset_path.exists():
+        click.echo(f"\033[91mError: Dataset file not found: {dataset_path}\033[0m")
+        sys.exit(1)
+
+    click.echo("\n\033[1m🧪 Testing reward and generation functions...\033[0m\n")
+    click.echo(f"Project: {project_path}")
+    click.echo(f"Dataset: {dataset_path}")
+    click.echo(f"Samples: {n_samples}\n")
+
+    try:
+        result = asyncio.run(run_test(
+            dataset_path,
+            project_path,
+            api_key,
+            n_samples,
+            model,
+            temperature,
+            max_tokens
+        ))
+
+        stats = result["stats"]
+        samples = result["results"]
+
+        # Print statistics
+        click.echo("\n\033[1m📊 Results:\033[0m")
+        click.echo(f"  Total samples: {stats['total_samples']}")
+        click.echo(f"  Completed: {stats['completed']}")
+        click.echo(f"  Aborted: {stats['aborted']}")
+        click.echo(f"  Avg reward: {stats['avg_reward']:.4f}")
+        click.echo(f"  Min reward: {stats['min_reward']:.4f}")
+        click.echo(f"  Max reward: {stats['max_reward']:.4f}")
+        click.echo(f"  Avg response length: {stats['avg_response_length']:.0f} tokens")
+
+        # Print sample outputs
+        click.echo("\n\033[1m📝 Sample outputs:\033[0m\n")
+        for i, sample in enumerate(samples[:3]):  # Show first 3
+            click.echo(f"Sample {i+1}:")
+            click.echo(f"  Prompt: {sample.prompt[:100]}...")
+            click.echo(f"  Response: {sample.response[:100]}...")
+            click.echo(f"  Reward: {sample.reward:.4f}")
+            click.echo(f"  Status: {sample.status}\n")
+
+        click.echo("\033[1m✅ Test completed successfully!\033[0m")
+
+    except FileNotFoundError as e:
+        click.echo(f"\033[91mError: {e}\033[0m")
+        sys.exit(1)
+    except Exception as e:
+        click.echo(f"\033[91mError: {e}\033[0m")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
+
+
+@cli.command()
 @click.argument("model_id")
 @click.option("--output", "-o", default="./models", help="Output directory (default: ./models)")
 def download(model_id, output):
