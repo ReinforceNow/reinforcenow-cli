@@ -23,7 +23,7 @@ from reinforcenow.auth import (
 from reinforcenow.utils import stream_sse_response
 
 # API URL - can be overridden with environment variable
-API_URL = os.environ.get("REINFORCENOW_API_URL", "http://localhost:3000/api")
+API_URL = os.environ.get("REINFORCENOW_API_URL", "https://www.reinforcenow.ai/api")
 
 
 def get_template_dir():

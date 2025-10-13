@@ -13,7 +13,7 @@ import requests
 import os
 
 # Allow override via environment variable for development
-AUTH_BASE_URL = os.environ.get("REINFORCENOW_AUTH_URL", "http://localhost:3000")
+AUTH_BASE_URL = os.environ.get("REINFORCENOW_AUTH_URL", "https://www.reinforcenow.ai")
 CLIENT_ID = "cli"
 USER_AGENT = "Reinmax-CLI/1.1"
 
