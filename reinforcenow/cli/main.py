@@ -9,7 +9,7 @@ from reinforcenow.cli.commands import login, logout, status, orgs, start, run, s
 @click.option('--debug', is_flag=True, hidden=True)
 @click.pass_context
 def cli(ctx, api_url, debug):
-    """Train language models with reinforcement learning from human feedback."""
+    """Train language models with reinforcement learning."""
     ctx.ensure_object(dict)
     ctx.obj['api_url'] = api_url
     ctx.obj['debug'] = debug
