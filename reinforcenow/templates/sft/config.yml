@@ -1,0 +1,23 @@
+project_id: ""
+project_name: "SFT Project"
+project_description: "A supervised fine-tuning project for language models"
+dataset_id: ""
+dataset_type: "sft"  # Supervised fine-tuning - RL params will be ignored
+dataset_name: "SFT Dataset"
+dataset_description: "A dataset for supervised fine-tuning"
+organization_id: ""
+params:
+  model: "qwen3-8b"
+  qlora_rank: 32
+  batch_size: 32
+  num_epochs: 3
+  max_steps: null  # Optional: Set to override num_epochs
+
+  # Validation frequency
+  val_steps: 100
+
+  # Save frequency
+  save_steps: 500
+
+  # Note: RL parameters (loss_fn, adv_estimator, compute_post_kl, kl_penalty_coef)
+  # are not applicable for SFT and will be ignored if specified
