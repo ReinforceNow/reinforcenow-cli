@@ -1,7 +1,7 @@
 # reinforcenow/cli/main.py
 
 import click
-from reinforcenow.cli import commands
+from reinforcenow.cli.commands import login, logout, status, orgs, start, run, stop
 
 
 @click.group(context_settings={'help_option_names': ['-h', '--help']})
@@ -14,16 +14,15 @@ def cli(ctx, api_url, debug):
     ctx.obj['api_url'] = api_url
     ctx.obj['debug'] = debug
 
-    commands.api.base_url = api_url
 
-
-cli.add_command(commands.login)
-cli.add_command(commands.logout)
-cli.add_command(commands.status)
-cli.add_command(commands.orgs)
-cli.add_command(commands.start)
-cli.add_command(commands.run)
-cli.add_command(commands.stop)
+# Add commands
+cli.add_command(login)
+cli.add_command(logout)
+cli.add_command(status)
+cli.add_command(orgs)
+cli.add_command(start)
+cli.add_command(run)
+cli.add_command(stop)
 
 
 def main():
