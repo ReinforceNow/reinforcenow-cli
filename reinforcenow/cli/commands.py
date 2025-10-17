@@ -16,64 +16,44 @@ from reinforcenow.cli import auth
 from reinforcenow.cli.common import require_auth, get_active_organization
 
 
-class API:
-    """Simple API wrapper with session management."""
-
-    def __init__(self, base_url: str = "https://www.reinforcenow.ai/api"):
-        self.base_url = base_url
-        self.session = requests.Session()
-        self.session.headers["User-Agent"] = "ReinforceNow-CLI/1.0"
-
-    def request(self, method: str, endpoint: str, authenticated: bool = True, **kwargs):
-        """Make API request."""
-        if authenticated:
-            require_auth()
-            headers = kwargs.pop("headers", {})
-            headers.update(auth.get_auth_headers())
-            kwargs["headers"] = headers
-
-        url = f"{self.base_url}{endpoint}"
-        return getattr(self.session, method)(url, **kwargs)
-
-    def get(self, endpoint: str, **kwargs):
-        """GET request."""
-        return self.request("get", endpoint, **kwargs)
-
-    def post(self, endpoint: str, **kwargs):
-        """POST request."""
-        return self.request("post", endpoint, **kwargs)
+# Simple session for API calls
+session = requests.Session()
+session.headers["User-Agent"] = "ReinforceNow-CLI/1.0"
 
 
-# Single API instance for the CLI
-api = API()
+def api_request(method: str, endpoint: str, base_url: str = None, authenticated: bool = True, **kwargs):
+    """Make API request."""
+    if authenticated:
+        require_auth()
+        headers = kwargs.pop("headers", {})
+        headers.update(auth.get_auth_headers())
+        kwargs["headers"] = headers
+
+    url = f"{base_url or 'https://www.reinforcenow.ai/api'}{endpoint}"
+    return getattr(session, method)(url, **kwargs)
 
 
 # ========== Auth Commands ==========
 
 @click.command()
 @click.option("--force", "-f", is_flag=True, help="Force new login even if already authenticated")
-def login(force: bool) -> models.LoginOutput:
+@click.pass_context
+def login(ctx, force: bool):
     """Login to ReinforceNow platform.
 
     Uses OAuth device flow for authentication.
     """
+    base_url = ctx.obj.get('api_url', 'https://www.reinforcenow.ai/api')
+
     if not force and auth.is_authenticated():
         click.echo(click.style("✓ Already authenticated", fg="green"))
         click.echo("Use --force to re-authenticate")
-        # Return existing credentials from file
-        try:
-            with open(auth.CREDS_FILE) as f:
-                creds = json.load(f)
-                return models.LoginOutput(
-                    access_token=creds.get("api_key", ""),
-                    organization_id=creds.get("organization_id")
-                )
-        except:
-            raise click.ClickException("Failed to read existing credentials")
+        return
 
     # Get device code
     try:
-        response = api.post("/auth/device/code", json={"client_id": "cli"}, authenticated=False)
+        response = api_request("post", "/auth/device/code", base_url,
+                              json={"client_id": "cli"}, authenticated=False)
         response.raise_for_status()
         device = models.DeviceCode(**response.json())
     except ValidationError as e:
@@ -81,9 +61,12 @@ def login(force: bool) -> models.LoginOutput:
     except requests.RequestException as e:
         raise click.ClickException(f"Failed to initiate login: {e}")
 
-    click.echo(f"\n{click.style('Opening browser:', fg='cyan')} {device.verification_uri}")
+    # Construct the full URL with user_code parameter
+    verification_url = f"{device.verification_uri}?user_code={device.user_code}"
+
+    click.echo(f"\n{click.style('Opening browser:', fg='cyan')} {verification_url}")
     click.echo(f"{click.style('Enter code:', fg='cyan')} {click.style(device.user_code, bold=True)}\n")
-    webbrowser.open(device.verification_uri)
+    webbrowser.open(verification_url)
 
     # Poll for token
     start = time.time()
@@ -93,7 +76,8 @@ def login(force: bool) -> models.LoginOutput:
             bar.update(1)
 
             try:
-                resp = api.post("/auth/device/token", json={"device_code": device.device_code}, authenticated=False)
+                resp = api_request("post", "/auth/device/token", base_url,
+                                 json={"device_code": device.device_code}, authenticated=False)
                 data = resp.json()
             except requests.RequestException as e:
                 raise click.ClickException(f"Network error: {e}")
@@ -104,16 +88,15 @@ def login(force: bool) -> models.LoginOutput:
                 except ValidationError as e:
                     raise click.ClickException(f"Invalid token response: {e}")
 
-                # Save credentials with secure permissions
+                # Save credentials
                 auth.DATA_DIR.mkdir(parents=True, exist_ok=True)
                 with open(auth.CREDS_FILE, "w") as f:
                     json.dump({"api_key": token.access_token, "organization_id": token.organization_id}, f)
-                # Set restrictive permissions (user read/write only)
                 auth.CREDS_FILE.chmod(0o600)
 
                 bar.finish()
                 click.echo(click.style("\n✓ Login successful!", fg="green", bold=True))
-                return models.LoginOutput(access_token=token.access_token, organization_id=token.organization_id)
+                return
 
             try:
                 error = models.TokenError(**data)
@@ -155,10 +138,13 @@ def orgs():
 
 
 @orgs.command("list")
-def orgs_list() -> models.Organizations:
+@click.pass_context
+def orgs_list(ctx):
     """List all available organizations."""
+    base_url = ctx.obj.get('api_url', 'https://www.reinforcenow.ai/api')
+
     try:
-        response = api.get("/auth/organizations")
+        response = api_request("get", "/auth/organizations", base_url)
         response.raise_for_status()
         orgs = models.Organizations(**response.json())
     except ValidationError as e:
@@ -168,7 +154,7 @@ def orgs_list() -> models.Organizations:
 
     if not orgs.organizations:
         click.echo(click.style("No organizations found", fg="yellow"))
-        return orgs
+        return
 
     click.echo(click.style("Organizations:", bold=True))
     for org in orgs.organizations:
@@ -179,8 +165,6 @@ def orgs_list() -> models.Organizations:
             mark = " "
             name = org.name
         click.echo(f"  [{mark}] {name} ({org.id}) - {org.role.value}")
-
-    return orgs
 
 
 @orgs.command("select")
@@ -195,87 +179,103 @@ def orgs_select(org_id: str):
 # ========== Project Commands ==========
 
 @click.command()
-@click.option("--template", "-t", default="blank", help="Project template to use")
+@click.option("--template", "-t", type=click.Choice(["start", "new", "blank"]), default="new", help="Project template to use")
 @click.option("--name", "-n", help="Project name (will prompt if not provided)")
-def start(template: str, name: str) -> models.ProjectCreateOutput:
+def start(template: str, name: str):
     """Initialize a new ReinforceNow project."""
     require_auth()
 
+    import shutil
+    from pathlib import Path
+
     project_name = name or click.prompt("Project name", default="My RLHF Project", type=str)
-    project_dir = Path("./project")
-    dataset_dir = Path("./dataset")
 
-    project_dir.mkdir(exist_ok=True)
-    dataset_dir.mkdir(exist_ok=True)
+    # Create project directory in current location
+    project_dir = Path(".")
 
+    # Copy template files if template is specified
+    if template in ["start", "new"]:
+        template_dir = Path(__file__).parent.parent / "templates" / template
+        if template_dir.exists():
+            # Copy all template files to current directory
+            for file in template_dir.iterdir():
+                if file.is_file():
+                    shutil.copy2(file, project_dir / file.name)
+                    click.echo(f"  Created {file.name}")
+
+    # Generate new IDs
     project_id = str(uuid.uuid4())
     dataset_id = str(uuid.uuid4())
+    org_id = get_active_organization()
 
-    config = models.ProjectConfig(
-        project_id=project_id,
-        project_name=project_name,
-        dataset_id=dataset_id,
-        dataset_type=models.DatasetType.RL,  # Default to RL
-        organization_id=get_active_organization(),
-        params=models.TrainingParams(
-            model=models.ModelType.QWEN3_8B,
-            qlora_rank=32,
-            batch_size=32,
-            num_epochs=3,
-            max_steps=None,
-            val_steps=100,  # Default to step-based validation
-            save_steps=500,  # Save every 500 steps
-            loss_fn=models.LossFunction.PPO,
-            adv_estimator=models.AdvantageEstimator.GRPO
-            # compute_post_kl defaults to False
-            # kl_penalty_coef defaults to 0.01
-        )
-    )
-
+    # Update config.yml with actual IDs
     config_path = project_dir / "config.yml"
-    with open(config_path, "w") as f:
-        yaml.dump(config.model_dump(mode='json'), f, default_flow_style=False, sort_keys=False)
+    if config_path.exists():
+        with open(config_path) as f:
+            config_data = yaml.safe_load(f)
 
-    click.echo(click.style(f"✓ Created project: {project_name}", fg="green"))
+        # Update IDs and name
+        config_data['project_id'] = project_id
+        config_data['project_name'] = project_name
+        config_data['dataset_id'] = dataset_id
+        config_data['organization_id'] = org_id
+
+        with open(config_path, "w") as f:
+            yaml.dump(config_data, f, default_flow_style=False, sort_keys=False)
+    else:
+        # Create new config for blank template
+        config = models.ProjectConfig(
+            project_id=project_id,
+            project_name=project_name,
+            dataset_id=dataset_id,
+            dataset_type=models.DatasetType.RL,
+            organization_id=org_id,
+            params=models.TrainingParams(
+                model=models.ModelType.QWEN3_8B,
+                qlora_rank=32,
+                batch_size=32,
+                num_epochs=3,
+                max_steps=None,
+                val_steps=100,
+                save_steps=500,
+                loss_fn=models.LossFunction.PPO,
+                adv_estimator=models.AdvantageEstimator.GRPO
+            )
+        )
+
+        with open(config_path, "w") as f:
+            yaml.dump(config.model_dump(mode='json'), f, default_flow_style=False, sort_keys=False)
+        click.echo(f"  Created config.yml")
+
+    click.echo(click.style(f"\n✓ Created project: {project_name}", fg="green"))
     click.echo(f"\nProject ID: {project_id}")
     click.echo(f"Dataset ID: {dataset_id}")
     click.echo(f"\nNext steps:")
-    click.echo(f"  1. Add training data to {dataset_dir}/train.jsonl")
-    click.echo(f"  2. Implement reward function in {project_dir}/reward_function.py")
+    click.echo(f"  1. Add training data to train.jsonl")
+    click.echo(f"  2. Implement reward function in reward_function.py")
     click.echo(f"  3. Run 'reinforcenow run' to start training")
-
-    return models.ProjectCreateOutput(
-        project_id=project_id,
-        project_name=project_name,
-        dataset_id=dataset_id,
-        organization_id=config.organization_id,
-        config_path=config_path,
-        project_dir=project_dir,
-        dataset_dir=dataset_dir
-    )
 
 
 @click.command()
-@click.option("--project-dir", "-p", default="./project",
+@click.option("--dir", "-d", default=".",
               type=click.Path(exists=True, file_okay=False, dir_okay=True, path_type=Path),
-              help="Project directory containing config and code files")
-@click.option("--dataset-dir", "-d", default="./dataset",
-              type=click.Path(exists=True, file_okay=False, dir_okay=True, path_type=Path),
-              help="Dataset directory containing training data")
-def run(project_dir: Path, dataset_dir: Path) -> models.TrainingSubmitOutput:
+              help="Directory containing project files (default: current directory)")
+@click.pass_context
+def run(ctx, dir: Path):
     """Submit project for training on ReinforceNow platform."""
     require_auth()
+    base_url = ctx.obj.get('api_url', 'https://www.reinforcenow.ai/api')
 
-    # Load and validate config (supports both .yml and .json for backwards compatibility)
-    config_yml = project_dir / "config.yml"
-    config_json = project_dir / "config.json"
+    # Load and validate config
+    config_yml = dir / "config.yml"
+    config_json = dir / "config.json"
 
     if config_yml.exists():
         try:
             with open(config_yml) as f:
                 config = models.ProjectConfig(**yaml.safe_load(f))
         except FileNotFoundError:
-            raise click.ClickException(f"Config file not found in {project_dir}")
+            raise click.ClickException(f"Config file not found in {dir}")
         except ValidationError as e:
             raise click.ClickException(f"Invalid project config: {e}")
         except yaml.YAMLError as e:
@@ -289,15 +289,15 @@ def run(project_dir: Path, dataset_dir: Path) -> models.TrainingSubmitOutput:
         except json.JSONDecodeError as e:
             raise click.ClickException(f"Invalid JSON in config file: {e}")
     else:
-        raise click.ClickException(f"No config.yml or config.json found in {project_dir}")
+        raise click.ClickException(f"No config.yml or config.json found in {dir}")
 
     if not config.organization_id:
         config.organization_id = get_active_organization()
 
-    # Validate required files
+    # Validate required files (all in the same directory now)
     required_files = {
-        "train.jsonl": dataset_dir / "train.jsonl",
-        "reward_function.py": project_dir / "reward_function.py"
+        "train.jsonl": dir / "train.jsonl",
+        "reward_function.py": dir / "reward_function.py"
     }
 
     missing_files = []
@@ -311,7 +311,7 @@ def run(project_dir: Path, dataset_dir: Path) -> models.TrainingSubmitOutput:
             click.echo(file_msg)
         raise click.ClickException("Missing required files for training submission")
 
-    # Upload files (config, required files, and optional files)
+    # Upload files
     files = []
 
     # Add config file
@@ -324,11 +324,11 @@ def run(project_dir: Path, dataset_dir: Path) -> models.TrainingSubmitOutput:
     for name, path in required_files.items():
         files.append((name.replace(".", "_"), (name, open(path, "rb"), "application/octet-stream")))
 
-    # Add optional files
+    # Add optional files (all in the same directory now)
     optional_files = {
-        "generation.py": project_dir / "generation.py",
-        "val.jsonl": dataset_dir / "val.jsonl",
-        "project.toml": project_dir / "project.toml"
+        "generation.py": dir / "generation.py",
+        "val.jsonl": dir / "val.jsonl",
+        "project.toml": dir / "project.toml"
     }
 
     for name, path in optional_files.items():
@@ -348,8 +348,8 @@ def run(project_dir: Path, dataset_dir: Path) -> models.TrainingSubmitOutput:
     click.echo("\n" + click.style("Uploading files...", fg="yellow"))
 
     try:
-        response = api.session.post(
-            f"{api.base_url}/training/submit",
+        response = session.post(
+            f"{base_url}/training/submit",
             data={"project_id": config.project_id, "dataset_id": config.dataset_id, "organization_id": config.organization_id},
             files=files,
             headers=headers
@@ -370,25 +370,21 @@ def run(project_dir: Path, dataset_dir: Path) -> models.TrainingSubmitOutput:
         if line.startswith("data: "):
             click.echo("  " + line[6:])
 
-    return models.TrainingSubmitOutput(
-        run_id="submitted",
-        project_id=config.project_id,
-        dataset_id=config.dataset_id,
-        status=models.RunStatus.PENDING
-    )
-
 
 @click.command()
 @click.argument("run_id", required=True)
 @click.confirmation_option(prompt="Are you sure you want to stop this training run?")
-def stop(run_id: str) -> models.TrainingStopOutput:
+@click.pass_context
+def stop(ctx, run_id: str):
     """Stop an active training run.
 
     Requires the RUN_ID obtained from 'reinforcenow run' command.
     """
+    base_url = ctx.obj.get('api_url', 'https://www.reinforcenow.ai/api')
+
     try:
         click.echo(f"Stopping training run: {run_id}...")
-        response = api.post("/training/stop", json={"run_id": run_id})
+        response = api_request("post", "/training/stop", base_url, json={"run_id": run_id})
         response.raise_for_status()
         data = response.json()
     except requests.RequestException as e:
@@ -396,16 +392,7 @@ def stop(run_id: str) -> models.TrainingStopOutput:
 
     click.echo(click.style(f"✓ Training run stopped: {run_id}", fg="green"))
 
-    result = models.TrainingStopOutput(
-        run_id=run_id,
-        status=data.get("status", "stopped"),
-        duration_minutes=data.get("duration_minutes"),
-        charged_amount=data.get("charged_amount")
-    )
-
-    if result.duration_minutes:
-        click.echo(f"  Duration: {result.duration_minutes:.1f} minutes")
-    if result.charged_amount:
-        click.echo(f"  Charged: ${result.charged_amount:.2f}")
-
-    return result
+    if data.get("duration_minutes"):
+        click.echo(f"  Duration: {data['duration_minutes']:.1f} minutes")
+    if data.get("charged_amount"):
+        click.echo(f"  Charged: ${data['charged_amount']:.2f}")

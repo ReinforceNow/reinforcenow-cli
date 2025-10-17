@@ -1,10 +1,8 @@
 # reinforcenow/models.py
-# All models in one place - both for API and outputs
 
 from enum import Enum
-from pathlib import Path
 from typing import List, Optional
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, model_validator
 
 
 # ===== Enums =====
@@ -138,32 +136,3 @@ class ProjectConfig(BaseModel):
         return self
 
 
-# ===== Output Types =====
-
-class LoginOutput(BaseModel):
-    access_token: str
-    organization_id: Optional[str] = None
-
-
-class ProjectCreateOutput(BaseModel):
-    project_id: str
-    project_name: str
-    dataset_id: str
-    organization_id: str
-    config_path: Path
-    project_dir: Path
-    dataset_dir: Path
-
-
-class TrainingSubmitOutput(BaseModel):
-    run_id: str
-    project_id: str
-    dataset_id: str
-    status: RunStatus = RunStatus.PENDING
-
-
-class TrainingStopOutput(BaseModel):
-    run_id: str
-    status: str
-    duration_minutes: Optional[float] = None
-    charged_amount: Optional[float] = None

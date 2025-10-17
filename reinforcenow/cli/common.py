@@ -1,14 +1,8 @@
 # reinforcenow/cli/common.py
 
 import json
-from pathlib import Path
-
 import click
-
 from reinforcenow.cli import auth
-
-API_URL = "https://www.reinforcenow.ai/api"
-TEMPLATES_DIR = Path(__file__).parent.parent / "templates"
 
 
 def get_active_organization():
@@ -22,7 +16,7 @@ def get_active_organization():
     try:
         with open(auth.CREDS_FILE) as f:
             return json.load(f).get("organization_id")
-    except:
+    except (FileNotFoundError, json.JSONDecodeError, KeyError):
         return None
 
 

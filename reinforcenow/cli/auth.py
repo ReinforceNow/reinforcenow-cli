@@ -5,23 +5,11 @@ from pathlib import Path
 from typing import Dict, Optional
 
 import click
-import platformdirs
 
-# Use proper XDG paths for config and data
-APP_NAME = "reinforcenow"
-APP_AUTHOR = "ReinforceNow"
-
-# Config directory for user preferences
-CONFIG_DIR = Path(platformdirs.user_config_dir(APP_NAME, APP_AUTHOR))
-CONFIG_FILE = CONFIG_DIR / "config.json"
-
-# Data directory for credentials (more secure location)
-DATA_DIR = Path(platformdirs.user_data_dir(APP_NAME, APP_AUTHOR))
+# Simple home directory paths
+DATA_DIR = Path.home() / ".reinforcenow"
 CREDS_FILE = DATA_DIR / "credentials.json"
-
-# Note: For enhanced security, consider using keyring library to store
-# credentials in the OS keychain. Current implementation uses file-based
-# storage with restricted permissions.
+CONFIG_FILE = DATA_DIR / "config.json"
 
 
 def is_authenticated() -> bool:
@@ -29,7 +17,7 @@ def is_authenticated() -> bool:
     try:
         with open(CREDS_FILE) as f:
             return "api_key" in json.load(f)
-    except:
+    except (FileNotFoundError, json.JSONDecodeError, KeyError):
         return False
 
 
@@ -42,7 +30,7 @@ def get_auth_headers() -> Dict[str, str]:
                 "Content-Type": "application/json",
                 "Authorization": f"Bearer {creds['api_key']}"
             }
-    except:
+    except (FileNotFoundError, json.JSONDecodeError, KeyError):
         raise click.ClickException("Not authenticated. Run 'reinforcenow login'")
 
 
@@ -51,18 +39,18 @@ def get_active_org_from_config() -> Optional[str]:
     try:
         with open(CONFIG_FILE) as f:
             return json.load(f).get("active_organization_id")
-    except:
+    except (FileNotFoundError, json.JSONDecodeError):
         return None
 
 
 def set_active_organization(org_id: str) -> None:
     """Set active organization."""
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
 
     try:
         with open(CONFIG_FILE) as f:
             config = json.load(f)
-    except:
+    except (FileNotFoundError, json.JSONDecodeError):
         config = {}
 
     config["active_organization_id"] = org_id
