@@ -1,0 +1,22 @@
+project_id: ""
+project_name: "Your Project Name"
+project_description: "A new RLHF project for training language models with custom reward functions"
+dataset_id: ""
+dataset_type: "rl"  # "sft" for supervised fine-tuning, "rl" for reinforcement learning
+dataset_name: "Your Dataset Name"
+dataset_description: "A new dataset for reinforcement learning from human feedback training"
+organization_id: ""
+params:
+  model: "qwen3-8b"
+  qlora_rank: 32
+  batch_size: 32
+  num_epochs: 3
+  max_steps: null  # Optional: Set to override num_epochs
+
+  val_steps: 100  
+
+  save_steps: 500  
+
+  # Loss and optimization (only for dataset_type="rl")
+  loss_fn: "ppo"  # Loss function: "ppo" or "importance_sampling"
+  adv_estimator: "grpo"  # Advantage estimator: "grpo", "gae", or "reinforce"

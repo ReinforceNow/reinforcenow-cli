@@ -16,7 +16,10 @@ readme = "README.md"
 requires-python = ">=3.8"
 dependencies = [
     "click>=8.0.0",
-    "requests>=2.25.0"
+    "requests>=2.25.0",
+    "pydantic>=1.8.0",
+    "pyyaml>=5.4.0",
+    "platformdirs>=3.0.0"
 ]
 
 [project.optional-dependencies]
@@ -25,4 +28,4 @@ test = ["openai>=1.0.0", "tqdm>=4.60.0"]
 all = ["fastapi>=0.68.0", "uvicorn>=0.15.0", "openai>=1.0.0", "tqdm>=4.60.0"]
 
 [project.scripts]
-reinforcenow = "reinforcenow.cli:cli"
+reinforcenow = "reinforcenow.cli.main:main"
