@@ -1,30 +1,32 @@
 # reward_function.py
-# Simplified API: Individual reward functions combined with reward_aggregator
+# Example reward functions using the new @reward decorator
 
-from reinforcenow import Sample, reward_function, reward_aggregator
+from reinforcenow.core import reward
 
 
-@reward_function(name="accuracy")
-async def check_accuracy(args, sample: Sample, **kwargs) -> float:
+@reward
+async def accuracy(args, sample, **kwargs):
     """
     Reward function that checks if sentiment classification is correct.
-    This will be tracked in the trace breakdown.
-
-    Args:
-        args: Additional arguments (unused in this example)
-        sample: Sample containing prompt, response, and ground_truth
-        **kwargs: Additional context
 
     Returns:
         Accuracy score: 1.0 for correct, 0.3 for valid format, 0.0 otherwise
     """
-    response = sample.response.strip().lower()
+    # Handle different sample formats
+    if isinstance(sample, dict):
+        messages = sample.get("messages", [])
+        if messages and len(messages) > 0:
+            response = messages[-1].get("content", "").strip().lower()
+        else:
+            response = sample.get("response", "").strip().lower()
 
-    # Get ground_truth from metadata if available
-    if hasattr(sample, "metadata") and sample.metadata:
-        ground_truth = sample.metadata.get("ground_truth", "").lower()
+        metadata = sample.get("metadata", {})
+        ground_truth = metadata.get("ground_truth", "").lower()
     else:
-        ground_truth = ""
+        # Handle object-style sample
+        response = getattr(sample, "response", "").strip().lower()
+        metadata = getattr(sample, "metadata", {})
+        ground_truth = metadata.get("ground_truth", "").lower() if metadata else ""
 
     # Reward correct predictions
     if response == ground_truth:
@@ -35,16 +37,23 @@ async def check_accuracy(args, sample: Sample, **kwargs) -> float:
         return 0.0
 
 
-@reward_function(name="format_quality")
-async def check_format(args, sample: Sample, **kwargs) -> float:
+@reward
+async def format_quality(args, sample, **kwargs):
     """
     Reward function that checks response format quality.
-    This will be tracked in the trace breakdown.
 
     Returns:
         Format score: 1.0 if properly formatted, 0.5 otherwise
     """
-    response = sample.response.strip()
+    # Handle different sample formats
+    if isinstance(sample, dict):
+        messages = sample.get("messages", [])
+        if messages and len(messages) > 0:
+            response = messages[-1].get("content", "").strip()
+        else:
+            response = sample.get("response", "").strip()
+    else:
+        response = getattr(sample, "response", "").strip()
 
     # Check if response is not empty and is one of the valid sentiments
     if response and response.lower() in ["positive", "negative", "neutral"]:
@@ -53,25 +62,19 @@ async def check_format(args, sample: Sample, **kwargs) -> float:
         return 0.5
 
 
-@reward_aggregator
-async def reward(args, sample: Sample, **kwargs) -> float:
+@reward
+async def combined_reward(args, sample, **kwargs):
     """
-    Main reward aggregator that combines individual reward functions.
-    The breakdown is automatically tracked and logged in traces.
-
-    Args:
-        args: Additional arguments
-        sample: Sample containing prompt, response, and ground_truth
-        **kwargs: Additional context
+    Main reward that combines individual reward functions.
 
     Returns:
-        Total reward score
+        Total reward score combining accuracy and format
     """
-    # Call individual reward functions - these are automatically tracked
-    accuracy = await check_accuracy(args, sample, **kwargs)
-    format_score = await check_format(args, sample, **kwargs)
+    # Call individual reward functions
+    acc_score = await accuracy(args, sample, **kwargs)
+    fmt_score = await format_quality(args, sample, **kwargs)
 
     # Combine scores with weighting
-    total_score = (accuracy * 0.8) + (format_score * 0.2)
+    total_score = (acc_score * 0.8) + (fmt_score * 0.2)
 
     return total_score

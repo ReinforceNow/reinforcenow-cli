@@ -179,7 +179,7 @@ def orgs_select(org_id: str):
 # ========== Project Commands ==========
 
 @click.command()
-@click.option("--template", "-t", type=click.Choice(["start", "new", "blank"]), default="new", help="Project template to use")
+@click.option("--template", "-t", type=click.Choice(["start", "new", "blank", "sft"]), default="start", help="Project template to use")
 @click.option("--name", "-n", help="Project name (will prompt if not provided)")
 def start(template: str, name: str):
     """Initialize a new ReinforceNow project."""
@@ -193,8 +193,8 @@ def start(template: str, name: str):
     # Create project directory in current location
     project_dir = Path(".")
 
-    # Copy template files if template is specified
-    if template in ["start", "new"]:
+    # Copy template files if template is specified (all except blank)
+    if template in ["start", "new", "sft"]:
         template_dir = Path(__file__).parent.parent / "templates" / template
         if template_dir.exists():
             # Copy all template files to current directory
@@ -202,6 +202,8 @@ def start(template: str, name: str):
                 if file.is_file():
                     shutil.copy2(file, project_dir / file.name)
                     click.echo(f"  Created {file.name}")
+        else:
+            click.echo(click.style(f"Warning: Template '{template}' not found, using blank template", fg="yellow"))
 
     # Generate new IDs
     project_id = str(uuid.uuid4())
@@ -231,15 +233,16 @@ def start(template: str, name: str):
             dataset_type=models.DatasetType.RL,
             organization_id=org_id,
             params=models.TrainingParams(
-                model=models.ModelType.QWEN3_8B,
+                model="meta-llama/Llama-3.2-1B-Instruct",
                 qlora_rank=32,
-                batch_size=32,
+                batch_size=8,
                 num_epochs=3,
+                learning_rate=1e-4,
                 max_steps=None,
                 val_steps=100,
-                save_steps=500,
-                loss_fn=models.LossFunction.PPO,
-                adv_estimator=models.AdvantageEstimator.GRPO
+                save_epochs=1,
+                loss_fn="ppo",
+                adv_estimator="grpo"
             )
         )
 
@@ -301,15 +304,24 @@ def run(ctx, dir: Path):
     }
 
     missing_files = []
+    empty_files = []
     for name, path in required_files.items():
         if not path.exists():
             missing_files.append(f"  • {name} at {path}")
+        elif path.stat().st_size == 0:
+            empty_files.append(f"  • {name} is empty - please add training data")
 
     if missing_files:
         click.echo(click.style("✗ Required files missing:", fg="red", bold=True))
         for file_msg in missing_files:
             click.echo(file_msg)
         raise click.ClickException("Missing required files for training submission")
+
+    if empty_files:
+        click.echo(click.style("✗ Empty files detected:", fg="red", bold=True))
+        for file_msg in empty_files:
+            click.echo(file_msg)
+        raise click.ClickException("Please add content to empty files before submitting")
 
     # Upload files
     files = []
@@ -338,7 +350,7 @@ def run(ctx, dir: Path):
     # Show submission summary
     click.echo(click.style("\nSubmitting training job:", bold=True))
     click.echo(f"  Project: {config.project_name}")
-    click.echo(f"  Model: {config.params.model.value if config.params else 'default'}")
+    click.echo(f"  Model: {config.params.model if config.params else 'default'}")
     click.echo(f"  Files: {len(files)} files ready for upload")
 
     # For multipart, we need to omit Content-Type so requests sets the boundary

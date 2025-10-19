@@ -7,17 +7,29 @@ dataset_name: "SFT Dataset"
 dataset_description: "A dataset for supervised fine-tuning"
 organization_id: ""
 params:
-  model: "qwen3-8b"
-  qlora_rank: 32
-  batch_size: 32
+  model: "meta-llama/Llama-3.2-1B"  # Must be one of the allowed models
+  batch_size: 8
   num_epochs: 3
+  learning_rate: 0.0001  # 1e-4
   max_steps: null  # Optional: Set to override num_epochs
 
-  # Validation frequency
-  val_steps: 100
+  # LoRA parameters
+  qlora_rank: 32
+  qlora_alpha: null  # Defaults to 2 * qlora_rank if not set
 
-  # Save frequency
-  save_steps: 500
+  # Validation frequency (choose one)
+  val_steps: 100  # Validate every N steps
+  val_epochs: null  # Or validate every N epochs
 
-  # Note: RL parameters (loss_fn, adv_estimator, compute_post_kl, kl_penalty_coef)
-  # are not applicable for SFT and will be ignored if specified
+  # Save frequency (choose one)
+  save_steps: null  # Save checkpoint every N steps
+  save_epochs: 1  # Or save checkpoint every N epochs
+
+  # Additional training parameters
+  gradient_checkpointing: true  # Use gradient checkpointing to save memory
+  fp16: true  # Use mixed precision training
+  num_workers: 4  # Number of data loading workers
+  checkpoint_dir: "/workspace/checkpoints"  # Directory for saving checkpoints
+
+  # Note: RL parameters (loss_fn, adv_estimator, kl_penalty_coef, training_mode)
+  # are not applicable for SFT and will be automatically cleared

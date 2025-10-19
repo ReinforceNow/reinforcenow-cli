@@ -7,18 +7,32 @@ dataset_name: "GSM8K Dataset"
 dataset_description: "Grade school math word problems for training mathematical reasoning capabilities"
 organization_id: ""
 params:
-  model: "qwen3-8b"
-  qlora_rank: 32
-  batch_size: 32
+  model: "meta-llama/Llama-3.2-1B"  # Must be one of the allowed models
+  batch_size: 8
   num_epochs: 3
+  learning_rate: 0.0001  # 1e-4
   max_steps: null  # Optional: Set to override num_epochs
 
-  # Validation frequency
-  val_epochs: 1  # Validate every epoch (use val_steps for step-based)
+  # LoRA parameters
+  qlora_rank: 32
+  qlora_alpha: null  # Defaults to 2 * qlora_rank if not set
 
-  # Save frequency
-  save_epochs: 1  # Save checkpoint every epoch (use save_steps for step-based)
+  # Validation frequency (choose one)
+  val_steps: 100  # Validate every N steps
+  val_epochs: null  # Or validate every N epochs
 
-  # Loss and optimization (only for dataset_type="rl")
+  # Save frequency (choose one)
+  save_steps: null  # Save checkpoint every N steps
+  save_epochs: 1  # Or save checkpoint every N epochs
+
+  # RL-specific parameters (only for dataset_type="rl")
   loss_fn: "ppo"  # Loss function: "ppo" or "importance_sampling"
   adv_estimator: "grpo"  # Advantage estimator: "grpo", "gae", or "reinforce"
+  kl_penalty_coef: 0.01  # KL divergence penalty coefficient
+  training_mode: "sync"  # Training mode: "sync", "async", or "stream_minibatch"
+
+  # Additional training parameters
+  gradient_checkpointing: true  # Use gradient checkpointing to save memory
+  fp16: true  # Use mixed precision training
+  num_workers: 4  # Number of data loading workers
+  checkpoint_dir: "/workspace/checkpoints"  # Directory for saving checkpoints
