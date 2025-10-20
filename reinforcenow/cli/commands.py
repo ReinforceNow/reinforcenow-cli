@@ -179,7 +179,7 @@ def orgs_select(org_id: str):
 # ========== Project Commands ==========
 
 @click.command()
-@click.option("--template", "-t", type=click.Choice(["start", "new", "blank", "sft"]), default="start", help="Project template to use")
+@click.option("--template", "-t", type=click.Choice(["start", "new", "blank", "sft", "rl-single", "rl-multi", "rl-tools"]), default="start", help="Project template to use")
 @click.option("--name", "-n", help="Project name (will prompt if not provided)")
 def start(template: str, name: str):
     """Initialize a new ReinforceNow project."""
@@ -193,9 +193,12 @@ def start(template: str, name: str):
     # Create project directory in current location
     project_dir = Path(".")
 
+    # Map "start" to "rl-single"
+    actual_template = "rl-single" if template == "start" else template
+
     # Copy template files if template is specified (all except blank)
-    if template in ["start", "new", "sft"]:
-        template_dir = Path(__file__).parent.parent / "templates" / template
+    if actual_template != "blank":
+        template_dir = Path(__file__).parent.parent / "templates" / actual_template
         if template_dir.exists():
             # Copy all template files to current directory
             for file in template_dir.iterdir():
@@ -300,7 +303,7 @@ def run(ctx, dir: Path):
     # Validate required files (all in the same directory now)
     required_files = {
         "train.jsonl": dir / "train.jsonl",
-        "reward_function.py": dir / "reward_function.py"
+        "rewards.py": dir / "rewards.py"
     }
 
     missing_files = []
@@ -339,6 +342,7 @@ def run(ctx, dir: Path):
     # Add optional files (all in the same directory now)
     optional_files = {
         "generation.py": dir / "generation.py",
+        "env.py": dir / "env.py",
         "val.jsonl": dir / "val.jsonl",
         "project.toml": dir / "project.toml"
     }

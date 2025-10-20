@@ -1,0 +1,20 @@
+project_id: ""
+project_name: "Multi-turn RL Test Project"
+project_description: "Test project for multi-turn reinforcement learning"
+dataset_id: ""
+dataset_type: "rl"
+dataset_name: "Multi-turn RL Test Dataset"
+dataset_description: "Multi-step problem solving with turn-based rewards"
+organization_id: ""
+params:
+  model: "Qwen/Qwen3-8B"
+  batch_size: 2
+  num_epochs: 1
+  learning_rate: 0.0001
+  max_steps: 5  # Multi-turn (up to 5 turns)
+  qlora_rank: 32
+  loss_fn: "importance_sampling"
+  adv_estimator: "grpo"
+  kl_penalty_coef: 0.01
+  val_steps: 10
+  save_epochs: 1

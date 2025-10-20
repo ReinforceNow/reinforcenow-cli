@@ -10,24 +10,25 @@ REWARD_REGISTRY: Dict[str, Callable] = {}
 
 def reward(fn: Callable = None, *, description: str = None) -> Callable:
     """
-    Decorator to register reward functions using the function name.
+    Decorator to register reward functions.
 
     Usage:
         @reward
         async def accuracy(args, sample):
             return 1.0
+
+        @reward(description="Accuracy-based reward")
+        async def accuracy(args, sample):
+            return 1.0
     """
     def decorator(func):
-        # Register with function name as key
-        REWARD_REGISTRY[func.__name__] = func
-
-        # Add metadata
         func._is_reward = True
-        func._description = description or f"Reward function: {func.__name__}"
+        func._reward_name = func.__name__
+        func._description = description or f"Reward: {func._reward_name}"
 
+        # Register for introspection (secondary mechanism)
+        REWARD_REGISTRY[func._reward_name] = func
         return func
 
     # Support both @reward and @reward(description="...")
-    if fn is None:
-        return decorator
-    return decorator(fn)
+    return decorator(fn) if fn else decorator

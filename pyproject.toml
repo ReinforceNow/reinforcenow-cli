@@ -11,15 +11,16 @@ reinforcenow = ["templates/*", "templates/start/*", "templates/new/*"]
 
 [project]
 name = "reinforcenow"
-version = "0.9.1"
+version = "0.9.2"
 description = "ReinforceNow CLI - Reinforcement Learning platform command-line interface"
 readme = "README.md"
-requires-python = ">=3.7"
+requires-python = ">=3.11"
 dependencies = [
     "click>=8.0.0",
     "requests>=2.25.0",
     "pydantic>=1.8.0",
-    "pyyaml>=5.4.0"
+    "pyyaml>=5.4.0",
+    "tinker>=0.2.2",
 ]
 
 [project.optional-dependencies]

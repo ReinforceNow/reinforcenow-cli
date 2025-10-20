@@ -1,4 +1,4 @@
-# reward_function.py
+# rewards.py
 # Simplified API: Individual reward functions combined with reward_aggregator
 
 from reinforcenow import Sample, reward_function, reward_aggregator

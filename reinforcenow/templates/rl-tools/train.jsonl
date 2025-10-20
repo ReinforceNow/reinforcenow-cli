@@ -1,0 +1,4 @@
+{"messages": [{"role": "user", "content": "Calculate 15 + 27"}], "rewards": ["tool_usage", "correct_answer"], "variables": {}, "metadata": {"expected_answer": "42", "expected_tool": "calculator"}}
+{"messages": [{"role": "user", "content": "What's the weather like in Paris?"}], "rewards": ["tool_usage", "correct_answer"], "variables": {}, "metadata": {"expected_answer": "weather_info", "expected_tool": "weather"}}
+{"messages": [{"role": "user", "content": "Multiply 8 by 12"}], "rewards": ["tool_usage", "correct_answer"], "variables": {}, "metadata": {"expected_answer": "96", "expected_tool": "calculator"}}
+{"messages": [{"role": "user", "content": "Convert 100 USD to EUR"}], "rewards": ["tool_usage", "correct_answer"], "variables": {}, "metadata": {"expected_answer": "conversion", "expected_tool": "currency"}}
