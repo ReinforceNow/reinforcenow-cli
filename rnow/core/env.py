@@ -4,7 +4,7 @@ import re
 from string import Template
 from typing import Dict, Any, Callable, Optional
 
-from reinforcenow.models import Env, StopCondition, Action, StepResult, Observation
+from rnow.models import Env, StopCondition, Action, StepResult, Observation
 
 
 # Global registry for environment classes

@@ -1,13 +1,10 @@
-# reinforcenow/models.py
-
 from enum import Enum
-from pydantic import BaseModel, model_validator
-from typing import Optional, List, TypeAlias, Literal
+from pydantic import BaseModel, Field, model_validator
+from typing import List, TypeAlias, Literal
 
 from dataclasses import dataclass, field
 import tinker
 from abc import ABC, abstractmethod
-
 
 
 class RunStatus(str, Enum):
@@ -46,7 +43,6 @@ class AdvantageEstimator(str, Enum):
     REINFORCE = "reinforce"  # REINFORCE algorithm
 
 
-# ===== API Models =====
 
 class DeviceCode(BaseModel):
     device_code: str
@@ -56,11 +52,9 @@ class DeviceCode(BaseModel):
     interval: int = 5
 
 
-from typing import Optional
-
 class Token(BaseModel):
     access_token: str
-    organization_id: Optional[str] = None
+    organization_id: str | None = None
 
 
 class TokenError(BaseModel):
@@ -75,11 +69,12 @@ class Organization(BaseModel):
 
 class Organizations(BaseModel):
     organizations: List[Organization]
-    active_organization_id: Optional[str] = None
+    active_organization_id: str | None = None
 
 
 class TrainingParams(BaseModel):
     model: Literal[
+        # Qwen models
         "Qwen/Qwen3-235B-A22B-Instruct-2507",
         "Qwen/Qwen3-30B-A3B-Instruct-2507",
         "Qwen/Qwen3-30B-A3B",
@@ -88,6 +83,13 @@ class TrainingParams(BaseModel):
         "Qwen/Qwen3-8B",
         "Qwen/Qwen3-8B-Base",
         "Qwen/Qwen3-4B-Instruct-2507",
+        # OpenAI models
+        "openai/gpt-oss-120b",
+        "openai/gpt-oss-20b",
+        # DeepSeek models
+        "deepseek-ai/DeepSeek-V3.1",
+        "deepseek-ai/DeepSeek-V3.1-Base",
+        # Meta Llama models
         "meta-llama/Llama-3.1-70B",
         "meta-llama/Llama-3.3-70B-Instruct",
         "meta-llama/Llama-3.1-8B",
@@ -95,49 +97,54 @@ class TrainingParams(BaseModel):
         "meta-llama/Llama-3.2-3B",
         "meta-llama/Llama-3.2-1B",
     ]
-    batch_size: int = 8
-    num_epochs: int = 3
+    batch_size: int = Field(...)
+    num_epochs: int = Field(...)
     learning_rate: float = 0.0001
-    max_steps: Optional[int] = None
+    max_tokens: int | None = 2048
     qlora_rank: int = 32
-    qlora_alpha: Optional[int] = None
-    val_steps: Optional[int] = None
-    val_epochs: Optional[int] = None
-    save_steps: Optional[int] = None
-    save_epochs: Optional[int] = None
-    loss_fn: Optional[str] = None
-    adv_estimator: Optional[str] = None
     kl_penalty_coef: float = 0.01
-    strategy: Optional[Literal["sft", "rl"]] = None
+    max_turns: int | None = 1
+    qlora_alpha: int | None = None
+    eval_step: int | None = None
+    save_step: int | None = None
+    val_split: float | None = None
+    loss_fn: str | None = None
+    adv_estimator: str | None = None
 
 
 class ProjectConfig(BaseModel):
-    project_id: str
-    project_name: str
-    dataset_id: str
-    dataset_type: DatasetType = DatasetType.RL
-    organization_id: Optional[str] = None
-    params: Optional[TrainingParams] = None
+    project_id: str = Field(...)
+    project_name: str = Field(...)
+    dataset_id: str = Field(...)
+    dataset_type: DatasetType = Field(...)
+    organization_id: str | None = None
+    params: TrainingParams = Field(...)
 
-    @model_validator(mode='after')
+    @model_validator(mode="after")
     def validate_dataset_type(self):
         """Set mode based on dataset_type and validate RL parameters."""
         if self.params:
-            # Set strategy based on dataset_type
+            # 1) Set strategy based on dataset_type
             if self.dataset_type == DatasetType.SFT:
-                self.params.strategy = "sft"
                 # Clear RL-specific params for SFT
                 self.params.loss_fn = None
                 self.params.adv_estimator = None
                 self.params.kl_penalty_coef = 0.0
             else:  # RL
-                self.params.strategy = "rl"
                 # Set RL defaults if not specified
                 if self.params.loss_fn is None:
-                    self.params.loss_fn = "importance_sampling"
+                    self.params.loss_fn = "ppo"
                 if self.params.adv_estimator is None:
                     self.params.adv_estimator = "grpo"
+
+            # 2) Epoch eval and save
+            if self.params.eval_step is None:
+                self.params.eval_step = 0
+            if self.params.save_step is None:
+                self.params.save_step = 0
+
         return self
+
 
 StopCondition: TypeAlias = list[str] | list[int]
 
@@ -147,6 +154,7 @@ Metrics: TypeAlias = dict[str, float | int]
 
 Observation: TypeAlias = tinker.ModelInput
 
+
 @dataclass
 class StepResult:
     reward: float
@@ -154,6 +162,7 @@ class StepResult:
     next_observation: Observation
     next_stop_condition: StopCondition
     metrics: Metrics = field(default_factory=dict)
+
 
 class Env(ABC):
     """

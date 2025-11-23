@@ -11,9 +11,9 @@ import requests
 import yaml
 from pydantic import ValidationError
 
-from reinforcenow import models
-from reinforcenow.cli import auth
-from reinforcenow.cli.common import require_auth, get_active_organization
+from rnow import models
+from rnow.cli import auth
+from rnow.cli.common import require_auth, get_active_organization
 
 
 # Simple session for API calls
@@ -242,8 +242,8 @@ def start(template: str, name: str):
                 num_epochs=3,
                 learning_rate=1e-4,
                 max_steps=None,
-                val_steps=100,
-                save_epochs=1,
+                eval_step=100,
+                save_step=1,
                 loss_fn="ppo",
                 adv_estimator="grpo"
             )
@@ -258,16 +258,17 @@ def start(template: str, name: str):
     click.echo(f"Dataset ID: {dataset_id}")
     click.echo(f"\nNext steps:")
     click.echo(f"  1. Add training data to train.jsonl")
-    click.echo(f"  2. Implement reward function in reward_function.py")
-    click.echo(f"  3. Run 'reinforcenow run' to start training")
+    click.echo(f"  3. Run 'rnow run' to start training")
 
 
 @click.command()
 @click.option("--dir", "-d", default=".",
               type=click.Path(exists=True, file_okay=False, dir_okay=True, path_type=Path),
               help="Directory containing project files (default: current directory)")
+@click.option("--name", "-n", default=None,
+              help="Custom name for the training run (default: auto-generated)")
 @click.pass_context
-def run(ctx, dir: Path):
+def run(ctx, dir: Path, name: str):
     """Submit project for training on ReinforceNow platform."""
     require_auth()
     base_url = ctx.obj.get('api_url', 'https://www.reinforcenow.ai/api')
@@ -303,16 +304,19 @@ def run(ctx, dir: Path):
     # Validate required files (all in the same directory now)
     required_files = {
         "train.jsonl": dir / "train.jsonl",
-        "rewards.py": dir / "rewards.py"
     }
+
+    # Only require rewards.py for RL datasets
+    if config.dataset_type == models.DatasetType.RL:
+        required_files["rewards.py"] = dir / "rewards.py"
 
     missing_files = []
     empty_files = []
-    for name, path in required_files.items():
+    for file_name, path in required_files.items():
         if not path.exists():
-            missing_files.append(f"  • {name} at {path}")
+            missing_files.append(f"  • {file_name} at {path}")
         elif path.stat().st_size == 0:
-            empty_files.append(f"  • {name} is empty - please add training data")
+            empty_files.append(f"  • {file_name} is empty - please add training data")
 
     if missing_files:
         click.echo(click.style("✗ Required files missing:", fg="red", bold=True))
@@ -336,24 +340,24 @@ def run(ctx, dir: Path):
         files.append(("config_json", ("config.json", open(config_json, "rb"), "application/octet-stream")))
 
     # Add required files
-    for name, path in required_files.items():
-        files.append((name.replace(".", "_"), (name, open(path, "rb"), "application/octet-stream")))
+    for file_name, path in required_files.items():
+        files.append((file_name.replace(".", "_"), (file_name, open(path, "rb"), "application/octet-stream")))
 
     # Add optional files (all in the same directory now)
     optional_files = {
-        "generation.py": dir / "generation.py",
         "env.py": dir / "env.py",
-        "val.jsonl": dir / "val.jsonl",
         "project.toml": dir / "project.toml"
     }
 
-    for name, path in optional_files.items():
+    for file_name, path in optional_files.items():
         if path.exists():
-            files.append((name.replace(".", "_"), (name, open(path, "rb"), "application/octet-stream")))
+            files.append((file_name.replace(".", "_"), (file_name, open(path, "rb"), "application/octet-stream")))
 
     # Show submission summary
     click.echo(click.style("\nSubmitting training job:", bold=True))
     click.echo(f"  Project: {config.project_name}")
+    if name:
+        click.echo(f"  Run Name: {name}")
     click.echo(f"  Model: {config.params.model if config.params else 'default'}")
     click.echo(f"  Files: {len(files)} files ready for upload")
 
@@ -363,10 +367,19 @@ def run(ctx, dir: Path):
 
     click.echo("\n" + click.style("Uploading files...", fg="yellow"))
 
+    # Include custom run name if provided
+    submit_data = {
+        "project_id": config.project_id,
+        "dataset_id": config.dataset_id,
+        "organization_id": config.organization_id
+    }
+    if name:
+        submit_data["run_name"] = name
+
     try:
         response = session.post(
             f"{base_url}/training/submit",
-            data={"project_id": config.project_id, "dataset_id": config.dataset_id, "organization_id": config.organization_id},
+            data=submit_data,
             files=files,
             headers=headers
         )
@@ -394,7 +407,7 @@ def run(ctx, dir: Path):
 def stop(ctx, run_id: str):
     """Stop an active training run.
 
-    Requires the RUN_ID obtained from 'reinforcenow run' command.
+    Requires the RUN_ID obtained from 'rnow run' command.
     """
     base_url = ctx.obj.get('api_url', 'https://www.reinforcenow.ai/api')
 

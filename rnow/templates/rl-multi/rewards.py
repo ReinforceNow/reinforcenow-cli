@@ -1,5 +1,5 @@
 # Multi-turn RL reward functions
-from reinforcenow.core import reward
+from rnow.core import reward
 
 @reward
 async def step_accuracy(args, sample, **kwargs):

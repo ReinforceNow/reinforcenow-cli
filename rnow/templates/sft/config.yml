@@ -8,8 +8,10 @@ dataset_description: "Supervised fine-tuning on conversation data"
 organization_id: ""
 params:
   model: "Qwen/Qwen3-8B"
-  batch_size: 8
-  num_epochs: 3
+  batch_size: 2
+  num_epochs: 40
   learning_rate: 0.0001
   qlora_rank: 32
-  save_epochs: 1
+  save_step: 2
+  eval_step: 3
+  val_split: 0.2
