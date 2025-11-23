@@ -16,5 +16,5 @@ params:
   loss_fn: "importance_sampling"
   adv_estimator: "grpo"
   kl_penalty_coef: 0.01
-  val_steps: 10
-  save_epochs: 1
+  eval_step: 10
+  save_step: 20

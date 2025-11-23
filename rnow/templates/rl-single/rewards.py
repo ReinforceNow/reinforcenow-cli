@@ -1,5 +1,5 @@
 # Single-turn RL reward function
-from reinforcenow.core import reward
+from rnow.core import reward
 
 @reward
 async def accuracy(args, sample, **kwargs):

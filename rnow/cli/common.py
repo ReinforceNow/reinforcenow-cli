@@ -2,7 +2,7 @@
 
 import json
 import click
-from reinforcenow.cli import auth
+from rnow.cli import auth
 
 
 def get_active_organization():

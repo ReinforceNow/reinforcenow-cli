@@ -17,13 +17,9 @@ params:
   qlora_rank: 32
   qlora_alpha: null  # Defaults to 2 * qlora_rank if not set
 
-  # Validation frequency (choose one)
-  val_steps: 100  # Validate every N steps
-  val_epochs: null  # Or validate every N epochs
-
-  # Save frequency (choose one)
-  save_steps: null  # Save checkpoint every N steps
-  save_epochs: 1  # Or save checkpoint every N epochs
+  # Evaluation and save frequency
+  eval_step: 100  # Evaluate every N steps (null to disable)
+  save_step: 100  # Save checkpoint every N steps (null to disable)
 
   # RL-specific parameters (only for dataset_type="rl")
   loss_fn: "ppo"  # Loss function: "ppo" or "importance_sampling"
