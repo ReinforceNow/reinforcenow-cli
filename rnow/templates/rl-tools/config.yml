@@ -11,7 +11,7 @@ params:
   batch_size: 2
   num_epochs: 1
   learning_rate: 0.0001
-  max_steps: 2  # Allow for tool call and response
+  max_turns: 2  # Allow for tool call and response
   qlora_rank: 32
   loss_fn: "importance_sampling"
   adv_estimator: "grpo"
