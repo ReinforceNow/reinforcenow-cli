@@ -181,7 +181,7 @@ def orgs_select(org_id: str):
 @click.command()
 @click.option("--template", "-t", type=click.Choice(["start", "new", "blank", "sft", "rl-single", "rl-multi", "rl-tools"]), default="start", help="Project template to use")
 @click.option("--name", "-n", help="Project name (will prompt if not provided)")
-def start(template: str, name: str):
+def init(template: str, name: str):
     """Initialize a new ReinforceNow project."""
     require_auth()
 
