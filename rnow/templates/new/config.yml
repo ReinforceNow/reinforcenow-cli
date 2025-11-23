@@ -21,6 +21,9 @@ params:
   eval_step: 100  # Evaluate every N steps (null to disable)
   save_step: 100  # Save checkpoint every N steps (null to disable)
 
+  # Validation split (for SFT only)
+  val_split: 0.2  # Use 20% of training data for validation (SFT only, ignored for RL)
+
   # RL-specific parameters (only for dataset_type="rl")
   loss_fn: "ppo"  # Loss function: "ppo" or "importance_sampling"
   adv_estimator: "grpo"  # Advantage estimator: "grpo", "gae", or "reinforce"

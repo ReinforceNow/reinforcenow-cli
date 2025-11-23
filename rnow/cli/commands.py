@@ -346,7 +346,6 @@ def run(ctx, dir: Path, name: str):
     # Add optional files (all in the same directory now)
     optional_files = {
         "env.py": dir / "env.py",
-        "val.jsonl": dir / "val.jsonl",
         "project.toml": dir / "project.toml"
     }
 

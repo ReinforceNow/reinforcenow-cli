@@ -107,6 +107,7 @@ class TrainingParams(BaseModel):
     qlora_alpha: int | None = None
     eval_step: int | None = None
     save_step: int | None = None
+    val_split: float | None = None
     loss_fn: str | None = None
     adv_estimator: str | None = None
 
