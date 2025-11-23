@@ -11,7 +11,7 @@ params:
   batch_size: 2
   num_epochs: 1
   learning_rate: 0.0001
-  max_steps: 5  # Multi-turn (up to 5 turns)
+  max_turns: 5  # Multi-turn (up to 5 turns)
   qlora_rank: 32
   loss_fn: "importance_sampling"
   adv_estimator: "grpo"

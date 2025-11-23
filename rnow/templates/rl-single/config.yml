@@ -9,11 +9,10 @@ organization_id: ""
 params:
   model: "Qwen/Qwen3-8B"
   batch_size: 2
-  num_epochs: 1
-  learning_rate: 0.0001
-  max_steps: 1  # Single turn
+  num_epochs: 
+  max_turns: 1  # Single turn
   qlora_rank: 32
-  loss_fn: "importance_sampling"
+  loss_fn: "ppo"
   adv_estimator: "grpo"
   kl_penalty_coef: 0.01
   eval_step: 10

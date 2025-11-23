@@ -10,6 +10,14 @@ from rnow.models import Env, StopCondition, Action, StepResult, Observation
 # Global registry for environment classes
 ENV_REGISTRY: Dict[str, type] = {}
 
+# Global trace logger callback
+TRACE_LOGGER: Optional[Callable[[dict], None]] = None
+
+def set_trace_logger(logger: Optional[Callable[[dict], None]]) -> None:
+    """Set the global trace logger callback."""
+    global TRACE_LOGGER
+    TRACE_LOGGER = logger
+
 
 class ReinforceNowEnv(Env):
     """Environment for both single-turn and multi-turn RL training with reward and tool registry support."""
@@ -112,13 +120,21 @@ class ReinforceNowEnv(Env):
             # Only keep total_reward in metrics for averaging
             metrics["total_reward"] = float(total_reward)
 
-            # Store everything else in rollout_data for logging
+            # Add individual reward metrics (numeric only) for averaging
+            for name, value in sample["rewards"].items():
+                metrics[f"reward/{name}"] = float(value)
+
+            # Store trace data on the environment instance for external access
             self.rollout_data = {
+                "reward": total_reward,
                 "reward_breakdown": sample["rewards"],
-                "reward_details": {f"reward/{name}": float(value) for name, value in sample["rewards"].items()},
                 "prompt_id": self.metadata.get("prompt_index", 0),
                 "step": self.turn_count,
                 "rollout_id": self.turn_count,
+                "total_tokens": len(action),
+                "completion": len(action),
+                "prompt": self.prompt_tokens,
+                "messages": self.conversation,
                 "rollout_data": {
                     "totalTokens": len(action),
                     "completion": len(action),
@@ -126,8 +142,16 @@ class ReinforceNowEnv(Env):
                     "truncated": False,
                     "metadata": self.metadata,
                 },
-                "messages": self.conversation,
             }
+
+            # Fire-and-forget trace logging
+            if TRACE_LOGGER is not None:
+                try:
+                    TRACE_LOGGER(self.rollout_data)
+                except Exception as e:
+                    # Don't kill training if trace logging fails
+                    import sys
+                    print(f"[ReinforceNowEnv] Failed to log trace: {e}", file=sys.stderr)
 
         observation = self.renderer.build_generation_prompt(messages=self.conversation)
         stop = self.renderer.get_stop_sequences()
@@ -165,23 +189,8 @@ class TelemetryWrapper:
     async def step(self, action: Action) -> StepResult:
         self.turn_count += 1
         result = await self.user_env.step(action)
-        metadata = getattr(self.user_env, "metadata", {})
-
-        telemetry = {
-            "reward_breakdown": getattr(result, "metrics", {}).get("reward_breakdown", {}),
-            "prompt_id": metadata.get("prompt_index"),
-            "step": self.turn_count,
-            "rollout_id": self.turn_count,
-            "rollout_data": {
-                "totalTokens": len(action),
-                "completion": len(action),
-                "prompt": getattr(self.user_env, "prompt_tokens", 0),
-                "truncated": False,
-                "metadata": metadata,
-            },
-        }
-
-        result.metrics = telemetry
+        # Pass through the result as-is, no telemetry modification needed
+        # Trace logging is now handled via the global callback in ReinforceNowEnv
         return result
 
 
@@ -219,4 +228,4 @@ def create_env(env_class_or_name: str | type, *args, **kwargs) -> Env:
 
 
 
-__all__ = ["ReinforceNowEnv", "TelemetryWrapper", "env", "ENV_REGISTRY", "create_env"]
+__all__ = ["ReinforceNowEnv", "TelemetryWrapper", "env", "ENV_REGISTRY", "create_env", "set_trace_logger"]
