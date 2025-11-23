@@ -1,7 +1,7 @@
 # reinforcenow/cli/main.py
 
 import click
-from rnow.cli.commands import login, logout, status, orgs, start, run, stop
+from rnow.cli.commands import login, logout, status, orgs, init, run, stop
 
 
 @click.group(context_settings={'help_option_names': ['-h', '--help']})
@@ -20,7 +20,7 @@ cli.add_command(login)
 cli.add_command(logout)
 cli.add_command(status)
 cli.add_command(orgs)
-cli.add_command(start)
+cli.add_command(init)
 cli.add_command(run)
 cli.add_command(stop)
 
