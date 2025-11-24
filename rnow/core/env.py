@@ -130,8 +130,8 @@ class ReinforceNowEnv(Env):
             completion_tokens = len(action)
             total_tokens = self.prompt_tokens + completion_tokens
 
-            # Create metadata without iteration (redundant with step)
-            clean_metadata = {k: v for k, v in self.metadata.items() if k != "iteration"}
+            # Create metadata without iteration and batch (redundant with step)
+            clean_metadata = {k: v for k, v in self.metadata.items() if k not in ["iteration", "batch"]}
 
             self.rollout_data = {
                 "reward": total_reward,
