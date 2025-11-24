@@ -1,21 +1,20 @@
-project_id: ""
-project_name: "Single-turn RL Test Project"
-project_description: "Test project for single-turn reinforcement learning"
-dataset_id: ""
-dataset_type: "rl"
-dataset_name: "Single-turn RL Test Dataset"
-dataset_description: "Sentiment classification with rewards"
-organization_id: ""
+project_id: a2b925c1-be87-4bc3-bd4c-af92cc902c7f
+project_name: My RLHF Project
+project_description: Test project for single-turn reinforcement learning
+dataset_id: 29fcbe8f-a9e6-48f4-98be-3492718fbff5
+dataset_type: rl
+dataset_name: Single-turn RL Test Dataset
+dataset_description: Sentiment classification with rewards
+organization_id: org_6z18shzbXCCwASVKHKAwYuMNHCRU7ung
 params:
-  model: "Qwen/Qwen3-8B"
+  model: Qwen/Qwen3-8B
   batch_size: 2
   group_size: 16
   num_epochs: 30
-  max_turns: 1  # Single turn
+  max_turns: 1
   qlora_rank: 32
-  loss_fn: "ppo"
-  adv_estimator: "grpo"
+  loss_fn: ppo
+  adv_estimator: grpo
   kl_penalty_coef: 0.01
   eval_step: 10
   save_step: 20
-  # thinking_mode: null  # Default = thinking enabled. Options: disabled, easy, medium, hard
