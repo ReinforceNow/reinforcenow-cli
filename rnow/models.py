@@ -137,6 +137,8 @@ class ProjectConfig(BaseModel):
                     self.params.loss_fn = "ppo"
                 if self.params.adv_estimator is None:
                     self.params.adv_estimator = "grpo"
+                if self.params.group_size is None:
+                    self.params.group_size = 4
 
             # 2) Epoch eval and save
             if self.params.eval_step is None:
