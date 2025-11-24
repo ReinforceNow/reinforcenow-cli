@@ -111,6 +111,7 @@ class TrainingParams(BaseModel):
     val_split: float | None = None
     loss_fn: str | None = None
     adv_estimator: str | None = None
+    thinking_mode: Literal["none", "disabled", "easy", "medium", "hard"] | None = None  # Control chain-of-thought reasoning
 
 
 class ProjectConfig(BaseModel):

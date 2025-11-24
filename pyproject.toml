@@ -9,6 +9,11 @@ include = ["rnow*"]
 [tool.setuptools.package-data]
 rnow = ["templates/*", "templates/start/*", "templates/new/*", "templates/**/*"]
 
+[tool.uv.workspace]
+members = [
+    "project",
+]
+
 [project]
 name = "rnow"
 version = "0.9.5"
