@@ -129,8 +129,8 @@ class ReinforceNowEnv(Env):
                 "reward": total_reward,
                 "reward_breakdown": sample["rewards"],
                 "prompt_id": self.metadata.get("prompt_index", 0),
-                "step": self.turn_count,
-                "rollout_id": self.turn_count,
+                "turn": self.turn_count,  # Turn within the episode
+                "rollout_id": self.metadata.get("rollout_id", self.metadata.get("env_id", self.turn_count)),
                 "total_tokens": len(action),
                 "completion": len(action),
                 "prompt": self.prompt_tokens,

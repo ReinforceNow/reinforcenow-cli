@@ -104,6 +104,7 @@ class TrainingParams(BaseModel):
     qlora_rank: int = 32
     kl_penalty_coef: float = 0.01
     max_turns: int | None = 1
+    group_size: int | None = 4  # Number of parallel environments per prompt (RL only)
     qlora_alpha: int | None = None
     eval_step: int | None = None
     save_step: int | None = None

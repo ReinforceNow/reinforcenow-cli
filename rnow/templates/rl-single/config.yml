@@ -9,7 +9,8 @@ organization_id: ""
 params:
   model: "Qwen/Qwen3-8B"
   batch_size: 2
-  num_epochs: 
+  group_size: 16
+  num_epochs: 30
   max_turns: 1  # Single turn
   qlora_rank: 32
   loss_fn: "ppo"

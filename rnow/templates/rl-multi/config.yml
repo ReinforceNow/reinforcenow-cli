@@ -9,8 +9,8 @@ organization_id: ""
 params:
   model: "Qwen/Qwen3-8B"
   batch_size: 2
+  group_size: 4  # Number of parallel environments per prompt
   num_epochs: 1
-  learning_rate: 0.0001
   max_turns: 5  # Multi-turn (up to 5 turns)
   qlora_rank: 32
   loss_fn: "importance_sampling"
