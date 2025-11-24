@@ -70,7 +70,9 @@ class ReinforceNowEnv(Env):
     async def step(self, action: Action) -> StepResult:
         """Execute one environment step, optionally invoking tools and computing rewards."""
         self.turn_count += 1
-        response = self.renderer.tokenizer.decode(action)
+        # Use renderer.parse_response to properly handle stop tokens like <|im_end|>
+        message, _ = self.renderer.parse_response(action)
+        response = message["content"]
         self.conversation.append({"role": "assistant", "content": response})
 
         # Tool Calling
@@ -125,22 +127,28 @@ class ReinforceNowEnv(Env):
                 metrics[f"reward/{name}"] = float(value)
 
             # Store trace data on the environment instance for external access
+            completion_tokens = len(action)
+            total_tokens = self.prompt_tokens + completion_tokens
+
+            # Create metadata without iteration (redundant with step)
+            clean_metadata = {k: v for k, v in self.metadata.items() if k != "iteration"}
+
             self.rollout_data = {
                 "reward": total_reward,
                 "reward_breakdown": sample["rewards"],
                 "prompt_id": self.metadata.get("prompt_index", 0),
                 "turn": self.turn_count,  # Turn within the episode
                 "rollout_id": self.metadata.get("rollout_id", self.metadata.get("env_id", self.turn_count)),
-                "total_tokens": len(action),
-                "completion": len(action),
-                "prompt": self.prompt_tokens,
+                "total_tokens": total_tokens,
+                "completion": completion_tokens,
+                "promptTokens": self.prompt_tokens,
                 "messages": self.conversation,
                 "rollout_data": {
-                    "totalTokens": len(action),
-                    "completion": len(action),
-                    "prompt": self.prompt_tokens,
+                    "totalTokens": total_tokens,
+                    "completion": completion_tokens,
+                    "promptTokens": self.prompt_tokens,
                     "truncated": False,
-                    "metadata": self.metadata,
+                    "metadata": clean_metadata,
                 },
             }
 

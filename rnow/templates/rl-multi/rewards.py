@@ -1,7 +1,7 @@
 # Multi-turn RL reward functions
 from rnow.core import reward
 
-@reward
+@reward(parse_reasoning=True)
 async def step_accuracy(args, sample, **kwargs):
     """
     Reward for each step in a multi-turn conversation.
@@ -19,7 +19,7 @@ async def step_accuracy(args, sample, **kwargs):
     else:
         return 0.0
 
-@reward
+@reward(parse_reasoning=True)
 async def final_answer(args, sample, **kwargs):
     """
     Reward for the final answer quality.

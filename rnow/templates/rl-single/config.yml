@@ -18,3 +18,4 @@ params:
   kl_penalty_coef: 0.01
   eval_step: 10
   save_step: 20
+  # thinking_mode: null  # Default = thinking enabled. Options: disabled, easy, medium, hard
