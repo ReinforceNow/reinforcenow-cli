@@ -7,15 +7,14 @@ dataset_name: "Multi-turn RL Test Dataset"
 dataset_description: "Multi-step problem solving with turn-based rewards"
 organization_id: ""
 params:
-  model: "Qwen/Qwen3-8B"
+  model: Qwen/Qwen3-8B
   batch_size: 2
-  group_size: 4  # Number of parallel environments per prompt
-  num_epochs: 1
-  max_turns: 5  # Multi-turn (up to 5 turns)
+  group_size: 16
+  num_epochs: 30
+  max_turns: 1
   qlora_rank: 32
-  loss_fn: "importance_sampling"
-  adv_estimator: "grpo"
+  loss_fn: ppo
+  adv_estimator: grpo
   kl_penalty_coef: 0.01
   eval_step: 10
   save_step: 20
-  # thinking_mode: null  # Default = thinking enabled. Options: disabled, easy, medium, hard

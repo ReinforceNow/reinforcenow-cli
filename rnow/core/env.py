@@ -1,22 +1,61 @@
+from __future__ import annotations
+
 import inspect
 import json
 import re
 from string import Template
-from typing import Dict, Any, Callable, Optional
+from typing import Any, Callable
 
 from rnow.models import Env, StopCondition, Action, StepResult, Observation
 
 
 # Global registry for environment classes
-ENV_REGISTRY: Dict[str, type] = {}
+ENV_REGISTRY: dict[str, type] = {}
 
 # Global trace logger callback
-TRACE_LOGGER: Optional[Callable[[dict], None]] = None
+TRACE_LOGGER: Callable[[dict], None] | None = None
 
-def set_trace_logger(logger: Optional[Callable[[dict], None]]) -> None:
+# Regex for parsing tool calls - captures everything between tags (handles nested JSON)
+TOOL_CALL_RE = re.compile(r"<tool_call>\s*(.*?)\s*</tool_call>", re.DOTALL)
+
+
+def set_trace_logger(logger: Callable[[dict], None] | None) -> None:
     """Set the global trace logger callback."""
     global TRACE_LOGGER
     TRACE_LOGGER = logger
+
+
+def _build_tools_block(tool_registry: dict[str, Callable]) -> str:
+    """Build the <tools> XML block from registered tool functions."""
+    if not tool_registry:
+        return ""
+
+    tools_json = []
+    for name, fn in tool_registry.items():
+        schema = getattr(fn, "_schema", {"type": "object", "properties": {}})
+        description = getattr(fn, "_description", "No description available.")
+        tools_json.append({
+            "name": name,
+            "description": description,
+            "parameters": schema,
+        })
+
+    tools_block = """# Tools
+
+You may call one or more functions to assist with the user query.
+
+You are provided with function signatures within <tools></tools> XML tags:
+<tools>
+{tools_list}
+</tools>
+
+For each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:
+<tool_call>
+{{"name": "<function-name>", "arguments": {{"<arg-name>": "<value>"}}}}
+</tool_call>
+""".format(tools_list=json.dumps(tools_json, indent=2))
+
+    return tools_block
 
 
 class ReinforceNowEnv(Env):
@@ -26,8 +65,8 @@ class ReinforceNowEnv(Env):
         self,
         data: dict,
         renderer: Any,
-        reward_registry: Dict[str, Callable],
-        tool_registry: Optional[Dict[str, Callable]] = None,
+        reward_registry: dict[str, Callable],
+        tool_registry: dict[str, Callable] | None = None,
         max_turns: int = 1,
         max_tokens: int = 2048,
     ):
@@ -55,6 +94,22 @@ class ReinforceNowEnv(Env):
             for msg in self.messages_templates
         ]
 
+        # Inject tools block into system prompt if tools are registered
+        if self.tool_registry:
+            tools_block = _build_tools_block(self.tool_registry)
+            self._inject_tools_into_system_prompt(tools_block)
+
+    def _inject_tools_into_system_prompt(self, tools_block: str) -> None:
+        """Inject tools block into the system message, or create one if missing."""
+        for msg in self.messages:
+            if msg["role"] == "system":
+                # Prepend tools block to existing system message
+                msg["content"] = tools_block + "\n\n" + msg["content"]
+                return
+
+        # No system message found, insert one at the beginning
+        self.messages.insert(0, {"role": "system", "content": tools_block})
+
     async def initial_observation(self) -> tuple[Observation, StopCondition]:
         """Return initial observation and stop condition."""
         self.turn_count = 0
@@ -75,25 +130,39 @@ class ReinforceNowEnv(Env):
         response = message["content"]
         self.conversation.append({"role": "assistant", "content": response})
 
-        # Tool Calling
-        tool_match = re.search(r"<tool_call>(.*?)</tool_call>", response, re.DOTALL)
-        if tool_match and self.tool_registry:
+        # Tool Calling - handle multiple tool calls
+        tool_matches = TOOL_CALL_RE.findall(response)
+        tools_called = len(tool_matches) > 0
+
+        for raw_call in tool_matches:
+            if not self.tool_registry:
+                break
             try:
-                tool_data = json.loads(tool_match.group(1))
+                tool_data = json.loads(raw_call)
                 tool_name = tool_data.get("name")
                 args = tool_data.get("arguments", {})
 
                 if tool_name not in self.tool_registry:
-                    raise ValueError(f"Tool '{tool_name}' not found in registry")
+                    self.conversation.append({
+                        "role": "tool",
+                        "content": f"<tool_error>Tool '{tool_name}' not found in registry</tool_error>"
+                    })
+                    continue
 
                 tool_fn = self.tool_registry[tool_name]
+                # Call tool with unpacked arguments (tools use typed params, not args dict)
                 tool_result = (
-                    await tool_fn(args) if inspect.iscoroutinefunction(tool_fn) else tool_fn(args)
+                    await tool_fn(**args) if inspect.iscoroutinefunction(tool_fn) else tool_fn(**args)
                 )
 
                 self.conversation.append({
                     "role": "tool",
                     "content": f"<tool_result>{json.dumps(tool_result)}</tool_result>"
+                })
+            except json.JSONDecodeError as e:
+                self.conversation.append({
+                    "role": "tool",
+                    "content": f"<tool_error>Invalid JSON in tool call: {str(e)}</tool_error>"
                 })
             except Exception as e:
                 self.conversation.append({
@@ -103,7 +172,7 @@ class ReinforceNowEnv(Env):
 
         # --- REWARD COMPUTATION ---
         total_reward = 0.0
-        metrics = {"turn": self.turn_count}
+        metrics = {"turn": self.turn_count, "tools_called": tools_called}
         done = self.turn_count >= self.max_turns
 
         if done:
