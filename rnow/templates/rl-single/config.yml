@@ -16,5 +16,4 @@ params:
   loss_fn: ppo
   adv_estimator: grpo
   kl_penalty_coef: 0.01
-  eval_step: 10
   save_step: 20
