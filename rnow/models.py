@@ -43,6 +43,11 @@ class AdvantageEstimator(str, Enum):
     REINFORCE = "reinforce"  # REINFORCE algorithm
 
 
+class TerminationPolicy(str, Enum):
+    MAX_TURNS = "max_turns"  # Episode ends when max_turns is exhausted
+    LAST_TOOL = "last_tool"  # Episode ends when assistant responds without a tool call
+
+
 
 class DeviceCode(BaseModel):
     device_code: str
@@ -112,6 +117,7 @@ class TrainingParams(BaseModel):
     loss_fn: str | None = None
     adv_estimator: str | None = None
     thinking_mode: Literal["none", "disabled", "easy", "medium", "hard"] | None = None  # Control chain-of-thought reasoning
+    termination_policy: Literal["max_turns", "last_tool"] | None = None  # When to end episode (RL only)
 
 
 class ProjectConfig(BaseModel):
@@ -140,6 +146,8 @@ class ProjectConfig(BaseModel):
                     self.params.adv_estimator = "grpo"
                 if self.params.group_size is None:
                     self.params.group_size = 4
+                if self.params.termination_policy is None:
+                    self.params.termination_policy = "last_tool"
 
             # 2) Epoch eval and save
             if self.params.eval_step is None:

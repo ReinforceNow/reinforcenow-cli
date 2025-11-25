@@ -12,9 +12,9 @@ params:
   group_size: 16
   num_epochs: 30
   max_turns: 5
+  termination_policy: last_tool  # "last_tool" = end when assistant responds without tool call, "max_turns" = always run max_turns
   qlora_rank: 32
   loss_fn: ppo
   adv_estimator: grpo
   kl_penalty_coef: 0.01
-  eval_step: 10
   save_step: 20

@@ -69,6 +69,7 @@ class ReinforceNowEnv(Env):
         tool_registry: dict[str, Callable] | None = None,
         max_turns: int = 1,
         max_tokens: int = 2048,
+        termination_policy: str = "last_tool",
     ):
         self.messages_templates = data["messages"]
         self.reward_names = data["rewards"]
@@ -86,6 +87,7 @@ class ReinforceNowEnv(Env):
         self.renderer = renderer
         self.max_turns = max_turns
         self.max_tokens = max_tokens
+        self.termination_policy = termination_policy
 
         # Substitute context variables into message templates
         ctx = {**self.metadata, **self.variables}
@@ -132,7 +134,7 @@ class ReinforceNowEnv(Env):
 
         # Tool Calling - handle multiple tool calls
         tool_matches = TOOL_CALL_RE.findall(response)
-        tools_called = len(tool_matches) > 0
+        tool_call_count = len(tool_matches)
 
         for raw_call in tool_matches:
             if not self.tool_registry:
@@ -170,10 +172,17 @@ class ReinforceNowEnv(Env):
                     "content": f"<tool_error>{str(e)}</tool_error>"
                 })
 
-        # --- REWARD COMPUTATION ---
+        # --- TERMINATION CHECK ---
         total_reward = 0.0
-        metrics = {"turn": self.turn_count, "tools_called": tools_called}
-        done = self.turn_count >= self.max_turns
+        metrics = {"turn": self.turn_count, "tool_call_count": tool_call_count}
+
+        # Determine if episode is done based on termination_policy
+        if self.termination_policy == "last_tool":
+            # End when assistant responds without a tool call (final answer)
+            done = tool_call_count == 0 or self.turn_count >= self.max_turns
+        else:  # "max_turns"
+            # Only end when max_turns is exhausted
+            done = self.turn_count >= self.max_turns
 
         if done:
             sample = {

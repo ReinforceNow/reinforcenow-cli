@@ -1,2 +1,1 @@
-# rewards.py
-
+from rnow.core import reward
