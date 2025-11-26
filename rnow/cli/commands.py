@@ -179,7 +179,7 @@ def orgs_select(org_id: str):
 # ========== Project Commands ==========
 
 @click.command()
-@click.option("--template", "-t", type=click.Choice(["start", "new", "blank", "sft", "rl-single", "rl-multi", "rl-tools"]), default="start", help="Project template to use")
+@click.option("--template", "-t", type=click.Choice(["start", "new", "blank", "sft", "rl-single", "rl-gsm8k", "rl-nextjs", "rl-tools"]), default="start", help="Project template to use")
 @click.option("--name", "-n", help="Project name (will prompt if not provided)")
 def init(template: str, name: str):
     """Initialize a new ReinforceNow project."""
@@ -200,11 +200,52 @@ def init(template: str, name: str):
     if actual_template != "blank":
         template_dir = Path(__file__).parent.parent / "templates" / actual_template
         if template_dir.exists():
+            # Get list of files to copy from template
+            files_to_copy = [f for f in template_dir.iterdir() if f.is_file()]
+            template_file_names = {f.name for f in files_to_copy}
+
+            # Define template-managed files (files that templates can provide)
+            managed_files = {
+                "config.yml", "train.jsonl", "rewards.py", "requirements.txt",
+                "env.py", "README.md"
+            }
+
+            # Find template-managed files that exist but aren't in the new template
+            extra_files = [
+                fname for fname in managed_files
+                if (project_dir / fname).exists() and fname not in template_file_names
+            ]
+
+            # Check if any files will be overwritten
+            existing_files = [f.name for f in files_to_copy if (project_dir / f.name).exists()]
+
+            # Show warnings and confirmations
+            if extra_files:
+                click.echo(click.style(f"\nWarning: The following files from previous template will be removed:", fg="yellow"))
+                for fname in extra_files:
+                    click.echo(f"  • {fname}")
+
+            if existing_files:
+                click.echo(click.style(f"\nWarning: The following files will be overwritten:", fg="yellow"))
+                for fname in existing_files:
+                    click.echo(f"  • {fname}")
+
+            if extra_files or existing_files:
+                if not click.confirm("\nDo you want to continue?", default=True):
+                    raise click.Abort()
+
+            # Remove extra template files
+            for fname in extra_files:
+                (project_dir / fname).unlink()
+                click.echo(f"  Removed {fname}")
+
             # Copy all template files to current directory
-            for file in template_dir.iterdir():
-                if file.is_file():
-                    shutil.copy2(file, project_dir / file.name)
-                    click.echo(f"  Created {file.name}")
+            for file in files_to_copy:
+                dest_file = project_dir / file.name
+                file_exists = dest_file.exists()
+                shutil.copy2(file, dest_file)
+                action = "Overwritten" if file_exists else "Created"
+                click.echo(f"  {action} {file.name}")
         else:
             click.echo(click.style(f"Warning: Template '{template}' not found, using blank template", fg="yellow"))
 
