@@ -1,20 +1,29 @@
 project_id: ""
-project_name: "Multi-turn RL Test Project"
-project_description: "Test project for multi-turn reinforcement learning"
+project_name: "Multi-turn RL with Tools"
 dataset_id: ""
-dataset_type: "rl"
-dataset_name: "Multi-turn RL Test Dataset"
-dataset_description: "Multi-step problem solving with turn-based rewards"
+dataset_type: rl
 organization_id: ""
-params:
-  model: Qwen/Qwen3-8B
+
+data:
+  train_file: train.jsonl
   batch_size: 2
   group_size: 16
-  num_epochs: 30
-  max_turns: 5
-  termination_policy: last_tool  # "last_tool" = end when assistant responds without tool call, "max_turns" = always run max_turns
+
+model:
+  path: Qwen/Qwen3-8B
   qlora_rank: 32
+
+algorithm:
   loss_fn: ppo
   adv_estimator: grpo
   kl_penalty_coef: 0.01
+
+rollout:
+  max_turns: 5
+  max_tokens: 2048
+  termination_policy: last_tool  # "last_tool" = end when no tool call, "max_turns" = always run max_turns
+
+trainer:
+  num_epochs: 30
+  learning_rate: 0.0001
   save_step: 20

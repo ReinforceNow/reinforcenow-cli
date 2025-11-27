@@ -1,17 +1,14 @@
-from rnow.core import reward
+from rnow.core import reward, RewardArgs
 
 
 @reward(parse_reasoning=True)
-async def accuracy(args, sample, **kwargs):
+async def accuracy(args: RewardArgs, messages: list) -> float:
     """
     Simple accuracy reward for sentiment classification.
     Returns 1.0 for correct, 0.0 for incorrect.
     """
-    # Get the response from messages
-    messages = sample.get("messages", [])
-
     response = messages[-1].get("content", "").strip().lower()
-    ground_truth = sample.get("metadata", {}).get("ground_truth", "").lower()
+    ground_truth = str(args.metadata.get("ground_truth") or "").lower()
 
     # Simple exact match
     if response == ground_truth:

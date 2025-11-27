@@ -14,6 +14,7 @@ from pydantic import ValidationError
 from rnow import models
 from rnow.cli import auth
 from rnow.cli.common import require_auth, get_active_organization
+from rnow.cli.cube import CubeSpinner
 
 
 # Simple session for API calls
@@ -276,22 +277,13 @@ def init(template: str, name: str):
             dataset_id=dataset_id,
             dataset_type=models.DatasetType.RL,
             organization_id=org_id,
-            params=models.TrainingParams(
-                model="meta-llama/Llama-3.2-1B-Instruct",
-                qlora_rank=32,
-                batch_size=8,
-                num_epochs=3,
-                learning_rate=1e-4,
-                max_steps=None,
-                eval_step=100,
-                save_step=1,
-                loss_fn="ppo",
-                adv_estimator="grpo"
-            )
+            data=models.DataConfig(batch_size=2, group_size=16),
+            model=models.ModelConfig(path="Qwen/Qwen3-8B"),
+            trainer=models.TrainerConfig(num_epochs=30),
         )
 
         with open(config_path, "w") as f:
-            yaml.dump(config.model_dump(mode='json'), f, default_flow_style=False, sort_keys=False)
+            yaml.dump(config.model_dump(mode='json', exclude_none=True), f, default_flow_style=False, sort_keys=False)
         click.echo(f"  Created config.yml")
 
     click.echo(click.style(f"\n✓ Created project: {project_name}", fg="green"))
@@ -394,19 +386,13 @@ def run(ctx, dir: Path, name: str):
         if path.exists():
             files.append((file_name.replace(".", "_"), (file_name, open(path, "rb"), "application/octet-stream")))
 
-    # Show submission summary
-    click.echo(click.style("\nSubmitting training job:", bold=True))
-    click.echo(f"  Project: {config.project_name}")
-    if name:
-        click.echo(f"  Run Name: {name}")
-    click.echo(f"  Model: {config.params.model if config.params else 'default'}")
-    click.echo(f"  Files: {len(files)} files ready for upload")
+    # ReinforceNow green: oklch(0.696 0.17 162.48) ≈ #22c55e
+    GREEN = "\033[38;2;34;197;94m"
+    RESET = "\033[0m"
 
     # For multipart, we need to omit Content-Type so requests sets the boundary
     headers = auth.get_auth_headers()
     headers.pop("Content-Type", None)
-
-    click.echo("\n" + click.style("Uploading files...", fg="yellow"))
 
     # Include custom run name if provided
     submit_data = {
@@ -417,28 +403,62 @@ def run(ctx, dir: Path, name: str):
     if name:
         submit_data["run_name"] = name
 
+    # Start cube spinner
+    spinner = CubeSpinner()
+    spinner.start()
+
+    run_url = None
+    error_msg = None
+
     try:
         response = session.post(
             f"{base_url}/training/submit",
             data=submit_data,
             files=files,
-            headers=headers
+            headers=headers,
+            stream=True
         )
+
+        if response.status_code != 200:
+            error_msg = f"Training submission failed: {response.text}"
+        else:
+            response.encoding = 'utf-8'
+
+            for line in response.iter_lines(decode_unicode=True):
+                if line and line.startswith("data: "):
+                    msg = line[6:]
+
+                    if "View:" in msg:
+                        run_url = msg.split("View:")[-1].strip()
+                    elif "http" in msg and "View" not in msg:
+                        run_url = msg.split()[-1].strip()
+                    elif msg.startswith("❌") or "Error" in msg or "failed" in msg.lower():
+                        error_msg = msg
+
+    except Exception as e:
+        error_msg = f"Request failed: {e}"
     finally:
-        # Close files
         for _, (_, fh, _) in files:
             fh.close()
+        spinner.stop()
 
-    if response.status_code != 200:
-        raise click.ClickException(f"Training submission failed: {response.text}")
+    # Show result
+    if error_msg:
+        click.echo(click.style(f"✗ {error_msg}", fg="red", bold=True))
+        raise click.ClickException("Training submission failed")
 
-    click.echo(click.style("✓ Files uploaded successfully", fg="green"))
-    click.echo("\n" + click.style("Training output:", bold=True))
+    # Get display values
+    model_name = config.model.path if config.model else 'Qwen/Qwen3-8B'
+    dataset_name = getattr(config, 'dataset_name', None) or config.dataset_id
 
-    # Stream output
-    for line in response.iter_lines(decode_unicode=True):
-        if line.startswith("data: "):
-            click.echo("  " + line[6:])
+    # Output with green checkmark emoji after text
+    click.echo(f"Project uploaded successfully {GREEN}✅{RESET}")
+    click.echo(f"  Project: {config.project_name}")
+    click.echo(f"  Model: {model_name}")
+    click.echo(f"  Dataset: {dataset_name}")
+    if run_url:
+        click.echo(f"\nView your experiment here:")
+        click.echo(f"{GREEN}{run_url}{RESET}")
 
 
 @click.command()

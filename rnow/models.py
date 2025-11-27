@@ -48,6 +48,14 @@ class TerminationPolicy(str, Enum):
     LAST_TOOL = "last_tool"  # Episode ends when assistant responds without a tool call
 
 
+class RewardArgs(BaseModel):
+    """Arguments passed to reward functions containing context about the sample."""
+    metadata: dict = Field(default_factory=dict)
+    variables: dict = Field(default_factory=dict)
+
+    class Config:
+        arbitrary_types_allowed = True
+
 
 class DeviceCode(BaseModel):
     device_code: str
@@ -77,83 +85,99 @@ class Organizations(BaseModel):
     active_organization_id: str | None = None
 
 
-class TrainingParams(BaseModel):
-    model: Literal[
-        # Qwen models
-        "Qwen/Qwen3-235B-A22B-Instruct-2507",
-        "Qwen/Qwen3-30B-A3B-Instruct-2507",
-        "Qwen/Qwen3-30B-A3B",
-        "Qwen/Qwen3-30B-A3B-Base",
-        "Qwen/Qwen3-32B",
-        "Qwen/Qwen3-8B",
-        "Qwen/Qwen3-8B-Base",
-        "Qwen/Qwen3-4B-Instruct-2507",
-        # OpenAI models
-        "openai/gpt-oss-120b",
-        "openai/gpt-oss-20b",
-        # DeepSeek models
-        "deepseek-ai/DeepSeek-V3.1",
-        "deepseek-ai/DeepSeek-V3.1-Base",
-        # Meta Llama models
-        "meta-llama/Llama-3.1-70B",
-        "meta-llama/Llama-3.3-70B-Instruct",
-        "meta-llama/Llama-3.1-8B",
-        "meta-llama/Llama-3.1-8B-Instruct",
-        "meta-llama/Llama-3.2-3B",
-        "meta-llama/Llama-3.2-1B",
-    ]
+# Supported model IDs
+SUPPORTED_MODELS = Literal[
+    # Qwen models
+    "Qwen/Qwen3-235B-A22B-Instruct-2507",
+    "Qwen/Qwen3-30B-A3B-Instruct-2507",
+    "Qwen/Qwen3-30B-A3B",
+    "Qwen/Qwen3-30B-A3B-Base",
+    "Qwen/Qwen3-32B",
+    "Qwen/Qwen3-8B",
+    "Qwen/Qwen3-8B-Base",
+    "Qwen/Qwen3-4B-Instruct-2507",
+    # OpenAI models
+    "openai/gpt-oss-120b",
+    "openai/gpt-oss-20b",
+    # DeepSeek models
+    "deepseek-ai/DeepSeek-V3.1",
+    "deepseek-ai/DeepSeek-V3.1-Base",
+    # Meta Llama models
+    "meta-llama/Llama-3.1-70B",
+    "meta-llama/Llama-3.3-70B-Instruct",
+    "meta-llama/Llama-3.1-8B",
+    "meta-llama/Llama-3.1-8B-Instruct",
+    "meta-llama/Llama-3.2-3B",
+    "meta-llama/Llama-3.2-1B",
+]
+
+
+class DataConfig(BaseModel):
+    """Data configuration for training."""
+    train_file: str = "train.jsonl"
     batch_size: int = Field(...)
+    group_size: int = 4  # Number of parallel rollouts per prompt (RL only)
+    val_split: float | None = None  # Validation split ratio (SFT only)
+
+
+class ModelConfig(BaseModel):
+    """Model configuration."""
+    path: SUPPORTED_MODELS = Field(...)
+    qlora_rank: int = 32
+    qlora_alpha: int | None = None  # Defaults to qlora_rank * 2
+
+
+class AlgorithmConfig(BaseModel):
+    """Algorithm configuration for RL training."""
+    loss_fn: Literal["ppo", "importance_sampling"] = "ppo"
+    adv_estimator: Literal["grpo", "gae", "reinforce"] = "grpo"
+    kl_penalty_coef: float = 0.01
+
+
+class RolloutConfig(BaseModel):
+    """Rollout configuration for RL training."""
+    max_turns: int = 1
+    max_tokens: int = 2048
+    termination_policy: Literal["max_turns", "last_tool"] = "last_tool"
+    thinking_mode: Literal["none", "disabled", "easy", "medium", "hard"] = "none"
+
+
+class TrainerConfig(BaseModel):
+    """Trainer configuration."""
     num_epochs: int = Field(...)
     learning_rate: float = 0.0001
-    max_tokens: int | None = 2048
-    qlora_rank: int = 32
-    kl_penalty_coef: float = 0.01
-    max_turns: int | None = 1
-    group_size: int | None = 4  # Number of parallel environments per prompt (RL only)
-    qlora_alpha: int | None = None
-    eval_step: int | None = None
-    save_step: int | None = None
-    val_split: float | None = None
-    loss_fn: str | None = None
-    adv_estimator: str | None = None
-    thinking_mode: Literal["none", "disabled", "easy", "medium", "hard"] | None = None  # Control chain-of-thought reasoning
-    termination_policy: Literal["max_turns", "last_tool"] | None = None  # When to end episode (RL only)
+    save_step: int = 0  # Save checkpoint every N steps (0 = end of epoch only)
+    eval_step: int = 0  # Evaluate every N steps (0 = end of epoch only)
 
 
 class ProjectConfig(BaseModel):
-    project_id: str = Field(...)
-    project_name: str = Field(...)
-    dataset_id: str = Field(...)
+    """Full project configuration."""
+    project_id: str = Field(default="")
+    project_name: str = Field(default="")
+    dataset_id: str = Field(default="")
     dataset_type: DatasetType = Field(...)
     organization_id: str | None = None
-    params: TrainingParams = Field(...)
+
+    # Nested config sections
+    data: DataConfig = Field(...)
+    model: ModelConfig = Field(...)
+    trainer: TrainerConfig = Field(...)
+    algorithm: AlgorithmConfig | None = None  # RL only
+    rollout: RolloutConfig | None = None  # RL only
 
     @model_validator(mode="after")
-    def validate_dataset_type(self):
-        """Set mode based on dataset_type and validate RL parameters."""
-        if self.params:
-            # 1) Set strategy based on dataset_type
-            if self.dataset_type == DatasetType.SFT:
-                # Clear RL-specific params for SFT
-                self.params.loss_fn = None
-                self.params.adv_estimator = None
-                self.params.kl_penalty_coef = 0.0
-            else:  # RL
-                # Set RL defaults if not specified
-                if self.params.loss_fn is None:
-                    self.params.loss_fn = "ppo"
-                if self.params.adv_estimator is None:
-                    self.params.adv_estimator = "grpo"
-                if self.params.group_size is None:
-                    self.params.group_size = 4
-                if self.params.termination_policy is None:
-                    self.params.termination_policy = "last_tool"
-
-            # 2) Epoch eval and save
-            if self.params.eval_step is None:
-                self.params.eval_step = 0
-            if self.params.save_step is None:
-                self.params.save_step = 0
+    def validate_config(self):
+        """Set defaults based on dataset_type."""
+        if self.dataset_type == DatasetType.RL:
+            # Set RL defaults if not specified
+            if self.algorithm is None:
+                self.algorithm = AlgorithmConfig()
+            if self.rollout is None:
+                self.rollout = RolloutConfig()
+        else:  # SFT
+            # Clear RL-specific configs for SFT
+            self.algorithm = None
+            self.rollout = None
 
         return self
 

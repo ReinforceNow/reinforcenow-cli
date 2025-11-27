@@ -3,7 +3,7 @@ Reward functions for Next.js ast-grep rules using ReinforceNow framework.
 Each reward function checks if the generated code matches the expected ast-grep pattern.
 """
 from ast_grep_py import SgRoot, Config
-from rnow.core import reward
+from rnow.core import reward, RewardArgs
 
 
 def _extract_first_code_block(text: str) -> str:
@@ -36,12 +36,11 @@ def _extract_first_code_block(text: str) -> str:
 
 
 @reward
-async def layout_syntax_1(args, sample, **kwargs) -> float:
+async def layout_syntax_1(args: RewardArgs, messages: list) -> float:
     """
     Reward for correct Next.js layout syntax with children prop.
     Reference: layout-syntax-1.yml
     """
-    messages = sample.get("messages", [])
     response = messages[-1].get("content", "") if messages else ""
     tsx_code = _extract_first_code_block(response)
 
@@ -63,12 +62,11 @@ async def layout_syntax_1(args, sample, **kwargs) -> float:
 
 
 @reward
-async def server_dynamic_segment_1(args, sample, **kwargs) -> float:
+async def server_dynamic_segment_1(args: RewardArgs, messages: list) -> float:
     """
     Reward for correct async param extraction in dynamic segment pages.
     Reference: server-dynamic-segment-1.yml
     """
-    messages = sample.get("messages", [])
     response = messages[-1].get("content", "") if messages else ""
     tsx_code = _extract_first_code_block(response)
 
@@ -90,12 +88,11 @@ async def server_dynamic_segment_1(args, sample, **kwargs) -> float:
 
 
 @reward
-async def server_dynamic_segment_2(args, sample, **kwargs) -> float:
+async def server_dynamic_segment_2(args: RewardArgs, messages: list) -> float:
     """
     Reward for generateStaticParams pattern.
     Reference: server-dynamic-segment-2.yml
     """
-    messages = sample.get("messages", [])
     response = messages[-1].get("content", "") if messages else ""
     tsx_code = _extract_first_code_block(response)
 
@@ -125,12 +122,11 @@ async def server_dynamic_segment_2(args, sample, **kwargs) -> float:
 
 
 @reward
-async def server_search_params(args, sample, **kwargs) -> float:
+async def server_search_params(args: RewardArgs, messages: list) -> float:
     """
     Reward for correct server searchParams handling.
     Reference: server-search-params.yml
     """
-    messages = sample.get("messages", [])
     response = messages[-1].get("content", "") if messages else ""
     tsx_code = _extract_first_code_block(response)
 
@@ -152,12 +148,11 @@ async def server_search_params(args, sample, **kwargs) -> float:
 
 
 @reward
-async def use_client_directive(args, sample, **kwargs) -> float:
+async def use_client_directive(args: RewardArgs, messages: list) -> float:
     """
     Reward for correct 'use client' directive placement.
     Reference: use-client-directive.yml
     """
-    messages = sample.get("messages", [])
     response = messages[-1].get("content", "") if messages else ""
     tsx_code = _extract_first_code_block(response)
 
@@ -176,12 +171,11 @@ async def use_client_directive(args, sample, **kwargs) -> float:
 
 
 @reward
-async def metadata_export(args, sample, **kwargs) -> float:
+async def metadata_export(args: RewardArgs, messages: list) -> float:
     """
     Reward for valid metadata export.
     Reference: metadata-export.yml
     """
-    messages = sample.get("messages", [])
     response = messages[-1].get("content", "") if messages else ""
     tsx_code = _extract_first_code_block(response)
 
@@ -199,12 +193,11 @@ async def metadata_export(args, sample, **kwargs) -> float:
 
 
 @reward
-async def error_boundary(args, sample, **kwargs) -> float:
+async def error_boundary(args: RewardArgs, messages: list) -> float:
     """
     Reward for valid error boundary component.
     Reference: error-boundary.yml
     """
-    messages = sample.get("messages", [])
     response = messages[-1].get("content", "") if messages else ""
     tsx_code = _extract_first_code_block(response)
 
@@ -235,12 +228,11 @@ async def error_boundary(args, sample, **kwargs) -> float:
 
 
 @reward
-async def not_found_boundary(args, sample, **kwargs) -> float:
+async def not_found_boundary(args: RewardArgs, messages: list) -> float:
     """
     Reward for not-found boundary component.
     Reference: not-found-boundary.yml
     """
-    messages = sample.get("messages", [])
     response = messages[-1].get("content", "") if messages else ""
     tsx_code = _extract_first_code_block(response)
 
@@ -258,12 +250,11 @@ async def not_found_boundary(args, sample, **kwargs) -> float:
 
 
 @reward
-async def loading_boundary(args, sample, **kwargs) -> float:
+async def loading_boundary(args: RewardArgs, messages: list) -> float:
     """
     Reward for loading boundary component.
     Reference: loading-boundary.yml
     """
-    messages = sample.get("messages", [])
     response = messages[-1].get("content", "") if messages else ""
     tsx_code = _extract_first_code_block(response)
 
@@ -281,12 +272,11 @@ async def loading_boundary(args, sample, **kwargs) -> float:
 
 
 @reward
-async def template_component(args, sample, **kwargs) -> float:
+async def template_component(args: RewardArgs, messages: list) -> float:
     """
     Reward for template component.
     Reference: template-component.yml
     """
-    messages = sample.get("messages", [])
     response = messages[-1].get("content", "") if messages else ""
     tsx_code = _extract_first_code_block(response)
 

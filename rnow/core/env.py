@@ -6,7 +6,7 @@ import re
 from string import Template
 from typing import Any, Callable
 
-from rnow.models import Env, StopCondition, Action, StepResult, Observation
+from rnow.models import Env, StopCondition, Action, StepResult, Observation, RewardArgs
 
 
 # Global registry for environment classes
@@ -185,23 +185,23 @@ class ReinforceNowEnv(Env):
             done = self.turn_count >= self.max_turns
 
         if done:
-            sample = {
-                "messages": self.conversation,
-                "rewards": {},
-                "variables": self.variables,
-                "metadata": self.metadata,
-            }
+            # Build RewardArgs with context
+            reward_args = RewardArgs(
+                metadata=self.metadata,
+                variables=self.variables,
+                rewards={},
+            )
 
             for fn, name in zip(self.reward_fns, self.reward_names):
-                value = await fn(None, sample)
-                sample["rewards"][name] = value
+                value = await fn(reward_args, self.conversation)
+                reward_args.rewards[name] = value
 
-            total_reward = sum(sample["rewards"].values()) / len(sample["rewards"])
+            total_reward = sum(reward_args.rewards.values()) / len(reward_args.rewards)
             # Only keep total_reward in metrics for averaging
             metrics["total_reward"] = float(total_reward)
 
             # Add individual reward metrics (numeric only) for averaging
-            for name, value in sample["rewards"].items():
+            for name, value in reward_args.rewards.items():
                 metrics[f"reward/{name}"] = float(value)
 
             # Store trace data on the environment instance for external access
@@ -213,7 +213,7 @@ class ReinforceNowEnv(Env):
 
             self.rollout_data = {
                 "reward": total_reward,
-                "reward_breakdown": sample["rewards"],
+                "reward_breakdown": reward_args.rewards,
                 "prompt_id": self.metadata.get("prompt_index", 0),
                 "turn": self.turn_count,  # Turn within the episode
                 "rollout_id": self.metadata.get("rollout_id", self.metadata.get("env_id", self.turn_count)),

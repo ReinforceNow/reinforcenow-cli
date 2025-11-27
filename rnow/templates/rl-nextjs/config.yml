@@ -1,21 +1,29 @@
 project_id: ""
-project_name: "Next.js Ast-Grep RL Training"
-project_description: "Reinforcement learning environment for training models on Next.js best practices using ast-grep patterns"
+project_name: "Next.js Code Generation"
 dataset_id: ""
-dataset_type: "rl"
-dataset_name: "Next.js 10 Rules Dataset"
-dataset_description: "Training dataset for 10 Next.js App Router best practice patterns"
+dataset_type: rl
 organization_id: ""
-params:
-  model: Qwen/Qwen3-8B
+
+data:
+  train_file: train.jsonl
   batch_size: 4
   group_size: 8
-  num_epochs: 50
-  max_turns: 1
-  termination_policy: max_turns
+
+model:
+  path: Qwen/Qwen3-8B
   qlora_rank: 32
+
+algorithm:
   loss_fn: ppo
   adv_estimator: grpo
   kl_penalty_coef: 0.01
-  save_step: 10
+
+rollout:
+  max_turns: 1
   max_tokens: 2048
+  termination_policy: max_turns
+
+trainer:
+  num_epochs: 50
+  learning_rate: 0.0001
+  save_step: 10

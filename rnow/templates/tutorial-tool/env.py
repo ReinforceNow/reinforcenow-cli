@@ -24,7 +24,7 @@ def internet_search(query: str) -> dict:
         )
         resp.raise_for_status()
     except requests.RequestException as e:
-        return {"results": [], "error": str(e)}
+        return []
 
     data = resp.json()
     results = []
