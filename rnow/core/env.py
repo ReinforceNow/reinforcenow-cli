@@ -189,19 +189,20 @@ class ReinforceNowEnv(Env):
             reward_args = RewardArgs(
                 metadata=self.metadata,
                 variables=self.variables,
-                rewards={},
             )
 
+            # Collect rewards in a local dict (not on RewardArgs)
+            rewards = {}
             for fn, name in zip(self.reward_fns, self.reward_names):
                 value = await fn(reward_args, self.conversation)
-                reward_args.rewards[name] = value
+                rewards[name] = value
 
-            total_reward = sum(reward_args.rewards.values()) / len(reward_args.rewards)
+            total_reward = sum(rewards.values()) / len(rewards)
             # Only keep total_reward in metrics for averaging
             metrics["total_reward"] = float(total_reward)
 
             # Add individual reward metrics (numeric only) for averaging
-            for name, value in reward_args.rewards.items():
+            for name, value in rewards.items():
                 metrics[f"reward/{name}"] = float(value)
 
             # Store trace data on the environment instance for external access
@@ -213,7 +214,7 @@ class ReinforceNowEnv(Env):
 
             self.rollout_data = {
                 "reward": total_reward,
-                "reward_breakdown": reward_args.rewards,
+                "reward_breakdown": rewards,
                 "prompt_id": self.metadata.get("prompt_index", 0),
                 "turn": self.turn_count,  # Turn within the episode
                 "rollout_id": self.metadata.get("rollout_id", self.metadata.get("env_id", self.turn_count)),
