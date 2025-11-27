@@ -15,6 +15,7 @@ from rnow import models
 from rnow.cli import auth
 from rnow.cli.common import require_auth, get_active_organization
 from rnow.cli.cube import CubeSpinner
+from rnow.cli.blob import maybe_upload_to_blob, MAX_INLINE_BYTES
 
 
 # Simple session for API calls
@@ -363,6 +364,28 @@ def run(ctx, dir: Path, name: str):
             click.echo(file_msg)
         raise click.ClickException("Please add content to empty files before submitting")
 
+    # ReinforceNow teal: #14B8A6
+    TEAL = "\033[38;2;20;184;166m"
+    RESET = "\033[0m"
+
+    # Start cube spinner early
+    spinner = CubeSpinner()
+
+    # Check if train.jsonl needs blob upload (>4MB)
+    train_path = dir / "train.jsonl"
+    train_size = train_path.stat().st_size
+    dataset_url = None
+
+    if train_size > MAX_INLINE_BYTES:
+        spinner.start()
+        try:
+            _, blob_info = maybe_upload_to_blob(base_url, train_path, config.dataset_id)
+            if blob_info:
+                dataset_url = blob_info.get("url")
+        except Exception as e:
+            spinner.stop()
+            raise click.ClickException(f"Failed to upload large dataset: {e}")
+
     # Upload files
     files = []
 
@@ -372,8 +395,11 @@ def run(ctx, dir: Path, name: str):
     elif config_json.exists():
         files.append(("config_json", ("config.json", open(config_json, "rb"), "application/octet-stream")))
 
-    # Add required files
+    # Add required files (skip train.jsonl if uploaded to blob)
     for file_name, path in required_files.items():
+        if file_name == "train.jsonl" and dataset_url:
+            # Skip - already uploaded to blob
+            continue
         files.append((file_name.replace(".", "_"), (file_name, open(path, "rb"), "application/octet-stream")))
 
     # Add optional files (all in the same directory now)
@@ -385,10 +411,6 @@ def run(ctx, dir: Path, name: str):
     for file_name, path in optional_files.items():
         if path.exists():
             files.append((file_name.replace(".", "_"), (file_name, open(path, "rb"), "application/octet-stream")))
-
-    # ReinforceNow green: oklch(0.696 0.17 162.48) ≈ #22c55e
-    GREEN = "\033[38;2;34;197;94m"
-    RESET = "\033[0m"
 
     # For multipart, we need to omit Content-Type so requests sets the boundary
     headers = auth.get_auth_headers()
@@ -403,9 +425,13 @@ def run(ctx, dir: Path, name: str):
     if name:
         submit_data["run_name"] = name
 
-    # Start cube spinner
-    spinner = CubeSpinner()
-    spinner.start()
+    # Add dataset URL if uploaded to blob
+    if dataset_url:
+        submit_data["dataset_url"] = dataset_url
+
+    # Start cube spinner if not already running (for small files)
+    if not spinner.running:
+        spinner.start()
 
     run_url = None
     error_msg = None
@@ -440,25 +466,28 @@ def run(ctx, dir: Path, name: str):
     finally:
         for _, (_, fh, _) in files:
             fh.close()
-        spinner.stop()
 
     # Show result
     if error_msg:
+        spinner.stop()  # Clear cube on error
         click.echo(click.style(f"✗ {error_msg}", fg="red", bold=True))
         raise click.ClickException("Training submission failed")
+
+    # Stop spinner but keep cube visible on success
+    spinner.stop(keep_visible=True)
 
     # Get display values
     model_name = config.model.path if config.model else 'Qwen/Qwen3-8B'
     dataset_name = getattr(config, 'dataset_name', None) or config.dataset_id
 
-    # Output with green checkmark emoji after text
-    click.echo(f"Project uploaded successfully {GREEN}✅{RESET}")
+    # Output completion messages below the cube
+    click.echo(f"Run started successfully {TEAL}✅{RESET}")
     click.echo(f"  Project: {config.project_name}")
     click.echo(f"  Model: {model_name}")
     click.echo(f"  Dataset: {dataset_name}")
     if run_url:
         click.echo(f"\nView your experiment here:")
-        click.echo(f"{GREEN}{run_url}{RESET}")
+        click.echo(f"{TEAL}{run_url}{RESET}")
 
 
 @click.command()

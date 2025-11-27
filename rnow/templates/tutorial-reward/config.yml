@@ -3,25 +3,20 @@ project_name: "Reward Function Tutorial"
 dataset_id: ""
 dataset_type: rl
 organization_id: ""
-
 data:
   train_file: train.jsonl
   batch_size: 2
   group_size: 16
-
 model:
   path: Qwen/Qwen3-8B
   qlora_rank: 32
-
 algorithm:
   loss_fn: ppo
   adv_estimator: grpo
   kl_penalty_coef: 0.01
-
 rollout:
   max_turns: 1
   max_tokens: 2048
-
 trainer:
   num_epochs: 30
   learning_rate: 0.0001

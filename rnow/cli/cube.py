@@ -13,11 +13,11 @@ import os
 
 # Display settings
 WIDTH = 50
-HEIGHT = 25
+HEIGHT = 18
 FRAME_DELAY = 0.04
 
-# ReinforceNow green: oklch(0.696 0.17 162.48) ≈ #22c55e
-GREEN = "\033[38;2;34;197;94m"
+# ReinforceNow teal: #14B8A6
+TEAL = "\033[38;2;20;184;166m"
 RESET = "\033[0m"
 
 # Cube faces with shading characters (front to back)
@@ -149,17 +149,23 @@ class CubeSpinner:
             frame = self.cube.render_frame()
             self.cube.rotate()
 
-            # Color the entire frame green
-            colored_frame = f"{GREEN}{frame}{RESET}"
+            # Strip trailing newlines to get accurate line count
+            frame = frame.rstrip('\n')
+            colored_frame = f"{TEAL}{frame}{RESET}"
 
-            # Clear previous frame (move cursor up and clear)
+            # Count actual lines in this frame
+            lines_this_frame = frame.count('\n') + 1
+
+            # Move back to top of previous frame (no clearing - new frame overwrites old)
             if not first_frame and self.lines_printed > 0:
-                sys.stdout.write(f"\033[{self.lines_printed}A\033[J")
+                sys.stdout.write(f"\033[{self.lines_printed}A")
+                sys.stdout.write("\r")
 
-            print(colored_frame, end='')
-            self.lines_printed = HEIGHT
-
+            # Print the new frame with newline so cursor ends below
+            sys.stdout.write(colored_frame + "\n")
             sys.stdout.flush()
+
+            self.lines_printed = lines_this_frame
             first_frame = False
             time.sleep(FRAME_DELAY)
 
@@ -168,8 +174,6 @@ class CubeSpinner:
         self.message = message
         self.running = True
         self.lines_printed = 0
-        # Print newlines to make room for the cube
-        print('\n' * (HEIGHT - 1), end='')
         self.thread = threading.Thread(target=self._animation_loop, daemon=True)
         self.thread.start()
 
@@ -177,15 +181,38 @@ class CubeSpinner:
         """Update the message."""
         self.message = message
 
-    def stop(self):
-        """Stop the animation and clear all output."""
+    def stop(self, keep_visible=False):
+        """Stop the animation.
+
+        Args:
+            keep_visible: If True, leave the cube frozen in place.
+                         If False (default), clear the cube from output.
+        """
         self.running = False
         if self.thread:
             self.thread.join(timeout=0.1)
-        # Move cursor up to start of cube and clear everything
-        sys.stdout.write(f"\033[{HEIGHT}A")
-        sys.stdout.write("\033[J")
-        sys.stdout.flush()
+
+        if keep_visible:
+            # Leave the cube visible, just move cursor below it
+            sys.stdout.write("\n")
+            sys.stdout.flush()
+        elif self.lines_printed > 0:
+            # Cursor is currently one line below the cube
+            # Move back up to the first line of the cube
+            sys.stdout.write(f"\033[{self.lines_printed}A")
+            sys.stdout.write("\r")
+
+            # Clear exactly self.lines_printed lines (not the whole screen)
+            for i in range(self.lines_printed):
+                sys.stdout.write("\033[2K")  # Clear current line only
+                if i < self.lines_printed - 1:
+                    sys.stdout.write("\n")
+
+            # Move cursor back up to where the first line was
+            if self.lines_printed > 1:
+                sys.stdout.write(f"\033[{self.lines_printed - 1}A")
+            sys.stdout.write("\r")
+            sys.stdout.flush()
 
 
 if __name__ == "__main__":
@@ -195,5 +222,11 @@ if __name__ == "__main__":
         time.sleep(3)
     except KeyboardInterrupt:
         pass
-    spinner.stop()
-    print(f"{GREEN}Done!{RESET}")
+    spinner.stop(keep_visible=True)
+    print(f"Run started successfully {TEAL}✅{RESET}")
+    print(f"  Project: My Project")
+    print(f"  Model: Qwen/Qwen3-8B")
+    print(f"  Dataset: train.jsonl")
+    print()
+    print(f"View your experiment here:")
+    print(f"{TEAL}https://reinforcenow.ai/run/abc123{RESET}")
