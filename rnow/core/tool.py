@@ -8,6 +8,11 @@ from typing import Callable, Dict, Any, get_type_hints
 TOOL_REGISTRY: Dict[str, Callable] = {}
 
 
+def clear_tool_registry() -> None:
+    """Clear the tool registry (useful for testing multiple projects)."""
+    TOOL_REGISTRY.clear()
+
+
 def _infer_schema(func: Callable) -> dict:
     """
     Infer JSON schema from function signature.

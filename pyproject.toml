@@ -9,11 +9,6 @@ include = ["rnow*"]
 [tool.setuptools.package-data]
 rnow = ["templates/*", "templates/start/*", "templates/new/*", "templates/**/*"]
 
-[tool.uv.workspace]
-members = [
-    "project",
-]
-
 [project]
 name = "rnow"
 version = "0.9.5"
@@ -23,9 +18,12 @@ requires-python = ">=3.11"
 dependencies = [
     "click>=8.0.0",
     "requests>=2.25.0",
+    "httpx>=0.24.0",
     "pydantic>=1.8.0",
     "pyyaml>=5.4.0",
+    "numpy<2",
     "tinker>=0.2.2",
+    "tinker-cookbook @ git+https://github.com/thinking-machines-lab/tinker-cookbook.git@53c6c38a2b124751406cd97c9ef1911daaa51e97",
 ]
 
 [project.optional-dependencies]

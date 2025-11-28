@@ -9,6 +9,11 @@ from rnow.models import RewardArgs
 REWARD_REGISTRY: Dict[str, Callable] = {}
 
 
+def clear_reward_registry() -> None:
+    """Clear the reward registry (useful for testing multiple projects)."""
+    REWARD_REGISTRY.clear()
+
+
 def reward(fn: Callable = None, *, description: str = None, parse_reasoning: bool = False) -> Callable:
     """
     Decorator to register reward functions.

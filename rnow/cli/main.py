@@ -2,6 +2,7 @@
 
 import click
 from rnow.cli.commands import login, logout, status, orgs, init, run, stop
+from rnow.cli.test import test
 
 
 @click.group(context_settings={'help_option_names': ['-h', '--help']})
@@ -23,6 +24,7 @@ cli.add_command(orgs)
 cli.add_command(init)
 cli.add_command(run)
 cli.add_command(stop)
+cli.add_command(test)
 
 
 def main():
