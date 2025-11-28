@@ -117,7 +117,7 @@ class DataConfig(BaseModel):
     train_file: str = "train.jsonl"
     batch_size: int = Field(...)
     group_size: int = 4  # Number of parallel rollouts per prompt (RL only)
-    val_split: float | None = None  # Validation split ratio (SFT only)
+    val_split: float | None = None  # Validation split ratio (0.0-1.0)
 
 
 class ModelConfig(BaseModel):
@@ -139,7 +139,7 @@ class RolloutConfig(BaseModel):
     max_turns: int = 1
     max_tokens: int = 2048
     termination_policy: Literal["max_turns", "last_tool"] = "last_tool"
-    thinking_mode: Literal["none", "disabled", "easy", "medium", "hard"] = "none"
+    thinking_mode: Literal["disabled", "easy", "medium", "hard"] | None = None  # None = model default
 
 
 class TrainerConfig(BaseModel):

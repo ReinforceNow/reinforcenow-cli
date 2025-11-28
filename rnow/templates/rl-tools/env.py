@@ -1,24 +1,26 @@
+import os
 import requests
-from bs4 import BeautifulSoup
 
 from rnow.core.tool import tool
 
 
 @tool
 def internet_search(query: str) -> dict:
-    """Search the web and return up to 5 results (title, link, snippet)."""
+    """Search the web using Tavily and return up to 5 results (title, link, snippet)."""
+    api_key = os.environ.get("TAVILY_API_KEY")
+    if not api_key:
+        return {"results": [], "error": "TAVILY_API_KEY environment variable not set"}
+
     try:
-        resp = requests.get(
-            "https://en.wikipedia.org/w/api.php",
-            params={
-                "action": "query",
-                "list": "search",
-                "srsearch": query,
-                "format": "json",
-                "srlimit": 5,
-            },
+        resp = requests.post(
+            "https://api.tavily.com/search",
             headers={
-                "User-Agent": "ReinforceNow/1.0 (https://reinforcenow.com) requests/2.32"
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "query": query,
+                "max_results": 5,
             },
             timeout=10,
         )
@@ -29,14 +31,11 @@ def internet_search(query: str) -> dict:
     data = resp.json()
     results = []
 
-    for item in data.get("query", {}).get("search", []):
-        # Strip HTML from snippet
-        snippet = BeautifulSoup(item.get("snippet", ""), "html.parser").get_text()
-        title = item.get("title", "")
+    for item in data.get("results", []):
         results.append({
-            "title": title,
-            "link": f"https://en.wikipedia.org/wiki/{title.replace(' ', '_')}",
-            "snippet": snippet[:200],
+            "title": item.get("title", ""),
+            "link": item.get("url", ""),
+            "snippet": item.get("content", "")[:200],
         })
 
     return results

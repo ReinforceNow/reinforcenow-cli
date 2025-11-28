@@ -7,8 +7,9 @@ data:
   train_file: train.jsonl
   batch_size: 32
   group_size: 16
+  val_split: 0.05
 model:
-  path: Qwen/Qwen3-8B
+  path: Qwen/Qwen3-30B-A3B
   qlora_rank: 32
 algorithm:
   loss_fn: ppo
@@ -22,3 +23,4 @@ trainer:
   num_epochs: 30
   learning_rate: 0.0001
   save_step: 20
+  eval_step: 5

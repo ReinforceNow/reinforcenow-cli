@@ -18,6 +18,45 @@ from rnow.cli.cube import CubeSpinner
 from rnow.cli.blob import maybe_upload_to_blob, MAX_INLINE_BYTES
 
 
+def get_thinking_mode_display(config: models.ProjectConfig) -> str:
+    """Get a human-readable display string for the thinking mode."""
+    thinking_mode = config.rollout.thinking_mode if config.rollout else None
+    model = config.model.path
+
+    # GPT-OSS: Reasoning models with levels
+    if model in ["openai/gpt-oss-120b", "openai/gpt-oss-20b"]:
+        if thinking_mode == "disabled":
+            return "Reasoning Off"
+        elif thinking_mode == "easy":
+            return "Reasoning Low"
+        elif thinking_mode == "hard":
+            return "Reasoning High"
+        else:  # None or medium
+            return "Reasoning Medium"
+
+    # Hybrid models: Qwen3, DeepSeek
+    if model in ["Qwen/Qwen3-30B-A3B", "Qwen/Qwen3-32B", "Qwen/Qwen3-8B",
+                 "Qwen/Qwen3-30B-A3B-Base", "Qwen/Qwen3-8B-Base",
+                 "deepseek-ai/DeepSeek-V3.1", "deepseek-ai/DeepSeek-V3.1-Base"]:
+        if thinking_mode == "disabled":
+            return "Reasoning Off"
+        else:
+            return "Reasoning On"
+
+    # Instruct models: no thinking support
+    if model in ["Qwen/Qwen3-235B-A22B-Instruct-2507", "Qwen/Qwen3-30B-A3B-Instruct-2507",
+                 "Qwen/Qwen3-4B-Instruct-2507", "meta-llama/Llama-3.3-70B-Instruct",
+                 "meta-llama/Llama-3.1-8B-Instruct"]:
+        return "Reasoning Off"
+
+    # Base Llama models
+    if model in ["meta-llama/Llama-3.1-70B", "meta-llama/Llama-3.1-8B",
+                 "meta-llama/Llama-3.2-3B", "meta-llama/Llama-3.2-1B"]:
+        return "Reasoning Off"
+
+    return "Reasoning Off"
+
+
 # Simple session for API calls
 session = requests.Session()
 session.headers["User-Agent"] = "ReinforceNow-CLI/1.0"
@@ -479,11 +518,12 @@ def run(ctx, dir: Path, name: str):
     # Get display values
     model_name = config.model.path if config.model else 'Qwen/Qwen3-8B'
     dataset_name = getattr(config, 'dataset_name', None) or config.dataset_id
+    thinking_mode = get_thinking_mode_display(config)
 
     # Output completion messages below the cube
     click.echo(f"Run started successfully {TEAL}✅{RESET}")
     click.echo(f"  Project: {config.project_name}")
-    click.echo(f"  Model: {model_name}")
+    click.echo(f"  Model: {model_name} ({TEAL}{thinking_mode}{RESET})")
     click.echo(f"  Dataset: {dataset_name}")
     if run_url:
         click.echo(f"\nView your experiment here:")
