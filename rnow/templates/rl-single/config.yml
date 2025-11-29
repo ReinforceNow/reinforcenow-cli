@@ -6,7 +6,7 @@ organization_id: ""
 data:
   train_file: train.jsonl
   batch_size: 3
-  group_size: 16
+  group_size: 4
   val_split: 0.25
 model:
   path: Qwen/Qwen3-8B
@@ -20,7 +20,7 @@ rollout:
   max_tokens: 2048
   termination_policy: last_tool
 trainer:
-  num_epochs: 30
+  num_epochs: 4
   learning_rate: 0.0001
   save_step: 20
-  eval_step: 3
+  eval_step: 2

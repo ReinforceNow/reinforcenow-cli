@@ -66,3 +66,5 @@ def reward(fn: Callable = None, *, description: str = None, parse_reasoning: boo
 
     # Support both @reward and @reward(description="...")
     return decorator(fn) if fn else decorator
+
+
