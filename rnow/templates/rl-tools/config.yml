@@ -1,0 +1,26 @@
+project_id: ""
+project_name: "Multi-turn RL with Tools"
+dataset_id: ""
+dataset_type: rl
+organization_id: ""
+data:
+  train_file: train.jsonl
+  batch_size: 2
+  group_size: 16
+model:
+  path: Qwen/Qwen3-8B
+  qlora_rank: 32
+  name: "Tool-Using Agent"
+  description: "Multi-turn RL model with tool capabilities"
+algorithm:
+  loss_fn: ppo
+  adv_estimator: grpo
+  kl_penalty_coef: 0.01
+rollout:
+  max_turns: 5
+  max_tokens: 2048
+  termination_policy: last_tool
+trainer:
+  num_epochs: 30
+  learning_rate: 0.0001
+  save_step: 20

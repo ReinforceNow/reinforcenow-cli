@@ -1,0 +1,74 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["rnow*"]
+
+[tool.setuptools.package-data]
+rnow = ["templates/*", "templates/start/*", "templates/new/*", "templates/**/*"]
+
+[project]
+name = "rnow"
+version = "0.9.5"
+description = "ReinforceNow CLI - Reinforcement Learning platform command-line interface"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "click>=8.0.0",
+    "requests>=2.25.0",
+    "httpx>=0.24.0",
+    "pydantic>=1.8.0",
+    "pyyaml>=5.4.0",
+    "numpy<2",
+    "tinker>=0.2.2",
+    "tinker-cookbook @ git+https://github.com/thinking-machines-lab/tinker-cookbook.git@53c6c38a2b124751406cd97c9ef1911daaa51e97",
+    "pre-commit>=4.5.0",
+]
+
+[project.optional-dependencies]
+api = ["fastapi>=0.68.0", "uvicorn>=0.15.0"]
+test = ["openai>=1.0.0", "tqdm>=4.60.0"]
+all = ["fastapi>=0.68.0", "uvicorn>=0.15.0", "openai>=1.0.0", "tqdm>=4.60.0"]
+
+[project.scripts]
+rnow = "rnow.cli.main:main"
+
+# =============================================================================
+# Ruff configuration (linting + formatting)
+# =============================================================================
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors
+    "F",      # pyflakes
+    "I",      # isort
+    "W",      # pycodestyle warnings
+    "UP",     # pyupgrade
+    "B",      # flake8-bugbear
+    "SIM",    # flake8-simplify
+]
+ignore = [
+    "E501",   # line too long (formatter handles)
+    "E402",   # imports not at top
+    "E722",   # bare except
+    "B008",   # function call in default arg
+    "B904",   # raise from err
+    "SIM115", # context manager for open
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["rnow"]
+
+# =============================================================================
+# Mypy configuration (type checking)
+# =============================================================================
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_ignores = true
+ignore_missing_imports = true

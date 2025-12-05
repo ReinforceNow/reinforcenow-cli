@@ -1,0 +1,1268 @@
+# reinforcenow/cli/commands.py
+
+import json
+import time
+import uuid
+import webbrowser
+from pathlib import Path
+
+import click
+import requests
+import yaml
+from pydantic import ValidationError
+
+from rnow import models
+from rnow.cli import auth
+from rnow.cli.blob import MAX_INLINE_BYTES, maybe_upload_to_blob
+from rnow.cli.common import get_active_organization, require_auth
+from rnow.cli.cube import CubeSpinner
+
+
+def format_validation_error(e: ValidationError) -> str:
+    """
+    Format Pydantic ValidationError into a user-friendly message.
+    """
+    lines = ["", click.style("✗ Invalid config.yml", fg="red", bold=True), ""]
+
+    for error in e.errors():
+        loc = ".".join(str(x) for x in error["loc"])
+        msg = error["msg"]
+        error_type = error["type"]
+
+        lines.append(f"  Field: {click.style(loc, bold=True)}")
+
+        # Get the input value if available
+        if "input" in error:
+            input_val = error["input"]
+            if isinstance(input_val, str) and len(input_val) > 50:
+                input_val = input_val[:50] + "..."
+            lines.append(f"    Got: {repr(input_val)}")
+
+        # Format the error message nicely
+        if error_type == "literal_error":
+            # Extract expected values from the message
+            lines.append(f"    Error: {msg}")
+        elif error_type == "extra_forbidden":
+            lines.append("    Error: Unknown field (typo?)")
+        elif error_type == "missing":
+            lines.append("    Error: Required field is missing")
+        elif error_type == "greater_than" or error_type == "greater_than_equal":
+            lines.append(f"    Error: {msg}")
+        else:
+            lines.append(f"    Error: {msg}")
+
+        lines.append("")
+
+    lines.append(
+        "Hint: Run 'rnow init -t sft' or 'rnow init -t rl' to see a valid config template."
+    )
+    return "\n".join(lines)
+
+
+def get_rewards_referenced_in_jsonl(path: Path, sample_size: int = 100) -> set[str]:
+    """
+    Extract all reward names referenced in train.jsonl.
+
+    Returns:
+        Set of reward names referenced in the 'rewards' field across all samples.
+    """
+    rewards = set()
+
+    try:
+        with open(path, encoding="utf-8") as f:
+            lines_checked = 0
+            for line in f:
+                stripped = line.strip()
+                if not stripped:
+                    continue
+
+                try:
+                    record = json.loads(stripped)
+                    if isinstance(record, dict) and "rewards" in record:
+                        record_rewards = record["rewards"]
+                        if isinstance(record_rewards, list):
+                            rewards.update(record_rewards)
+                except json.JSONDecodeError:
+                    continue
+
+                lines_checked += 1
+                if lines_checked >= sample_size:
+                    break
+    except Exception:
+        pass
+
+    return rewards
+
+
+def validate_reward_references(train_jsonl_path: Path, rewards_py_path: Path) -> list[str]:
+    """
+    Validate that all reward names in train.jsonl exist in rewards.py.
+
+    Returns:
+        List of error messages (empty if valid).
+    """
+    errors = []
+
+    try:
+        from rnow.core.reward import get_reward_names_from_file
+    except ImportError:
+        return []  # Skip validation if module not available
+
+    # Get rewards defined in rewards.py
+    defined_rewards = get_reward_names_from_file(rewards_py_path)
+
+    # Get rewards referenced in train.jsonl
+    referenced_rewards = get_rewards_referenced_in_jsonl(train_jsonl_path)
+
+    # Find missing rewards
+    missing_rewards = referenced_rewards - defined_rewards
+
+    if missing_rewards:
+        for reward_name in sorted(missing_rewards):
+            errors.append(
+                f"Reward '{reward_name}' is referenced in train.jsonl but not defined in rewards.py"
+            )
+
+        if defined_rewards:
+            errors.append(
+                f"  Available rewards in rewards.py: {', '.join(sorted(defined_rewards))}"
+            )
+        else:
+            errors.append("  No @reward functions found in rewards.py")
+
+    return errors
+
+
+def validate_train_jsonl(
+    path: Path, dataset_type: models.DatasetType, sample_size: int = 50
+) -> list[str]:
+    """
+    Validate train.jsonl format by sampling first N lines.
+    Returns a list of error messages (empty if valid).
+    """
+    errors = []
+
+    try:
+        with open(path, encoding="utf-8") as f:
+            lines_checked = 0
+            for line_num, line in enumerate(f, start=1):
+                # Skip empty lines
+                stripped = line.strip()
+                if not stripped:
+                    continue
+
+                # Try to parse as JSON
+                try:
+                    record = json.loads(stripped)
+                except json.JSONDecodeError as e:
+                    errors.append(f"Line {line_num}: Invalid JSON - {e.msg}")
+                    if len(errors) >= 5:
+                        errors.append("... (stopping after 5 errors)")
+                        return errors
+                    continue
+
+                # Check it's a dict
+                if not isinstance(record, dict):
+                    errors.append(
+                        f"Line {line_num}: Expected JSON object, got {type(record).__name__}"
+                    )
+                    continue
+
+                # Check for required 'messages' field
+                if "messages" not in record:
+                    errors.append(f"Line {line_num}: Missing required 'messages' field")
+                    continue
+
+                messages = record["messages"]
+                if not isinstance(messages, list):
+                    errors.append(f"Line {line_num}: 'messages' must be a list")
+                    continue
+
+                if len(messages) == 0:
+                    errors.append(f"Line {line_num}: 'messages' list is empty")
+                    continue
+
+                # Check each message has role and content
+                for msg_idx, msg in enumerate(messages):
+                    if not isinstance(msg, dict):
+                        errors.append(f"Line {line_num}: Message {msg_idx + 1} must be an object")
+                        break
+                    if "role" not in msg:
+                        errors.append(f"Line {line_num}: Message {msg_idx + 1} missing 'role'")
+                        break
+                    if "content" not in msg:
+                        errors.append(f"Line {line_num}: Message {msg_idx + 1} missing 'content'")
+                        break
+                    if msg["role"] not in ("system", "user", "assistant"):
+                        errors.append(
+                            f"Line {line_num}: Message {msg_idx + 1} has invalid role '{msg['role']}' (expected: system, user, assistant)"
+                        )
+                        break
+
+                # For RL, check for rewards field
+                if dataset_type == models.DatasetType.RL and "rewards" not in record:
+                    errors.append(
+                        f"Line {line_num}: Missing required 'rewards' field for RL dataset"
+                    )
+
+                lines_checked += 1
+                if lines_checked >= sample_size:
+                    break
+
+            # Check if file was effectively empty (only whitespace)
+            if lines_checked == 0:
+                errors.append("File contains no valid JSON lines")
+
+    except Exception as e:
+        errors.append(f"Failed to read file: {e}")
+
+    return errors
+
+
+from functools import lru_cache
+
+
+@lru_cache(maxsize=256)
+def _pypi_requires_python(project: str, version: str | None = None) -> str | None:
+    """
+    Return the `Requires-Python` specifier for a project (and optionally a specific version),
+    or None if it can't be determined.
+    """
+    import urllib.error
+    import urllib.request
+
+    try:
+        if version:
+            url = f"https://pypi.org/pypi/{project}/{version}/json"
+        else:
+            url = f"https://pypi.org/pypi/{project}/json"
+
+        with urllib.request.urlopen(url, timeout=5) as response:
+            data = json.loads(response.read().decode())
+
+        info = data.get("info", {})
+        return info.get("requires_python")
+    except (urllib.error.URLError, TimeoutError, ValueError, KeyError):
+        return None
+    except Exception:
+        return None
+
+
+def check_pypi_python_compatibility(req, target_python: str = "3.11") -> str | None:
+    """
+    Check if a package on PyPI supports the target Python version.
+    Returns an error string if clearly incompatible, otherwise None.
+
+    Args:
+        req: A packaging.requirements.Requirement object
+        target_python: Target Python version string (e.g., "3.11")
+    """
+    try:
+        from packaging.specifiers import SpecifierSet
+        from packaging.version import Version
+    except ImportError:
+        return None
+
+    target_version = Version(target_python)
+
+    # Try to respect pinned version if present (foo==1.2.3)
+    pinned_version = None
+    for spec in req.specifier:
+        if spec.operator == "==":
+            pinned_version = spec.version
+            break
+
+    requires_python = _pypi_requires_python(req.name, pinned_version)
+    if not requires_python:
+        # Unknown compatibility → don't fail hard
+        return None
+
+    try:
+        specifier = SpecifierSet(requires_python)
+        if target_version not in specifier:
+            if pinned_version:
+                return (
+                    f"Package '{req.name}=={pinned_version}' requires Python "
+                    f"{requires_python}, which does not include Python {target_python}"
+                )
+            else:
+                return (
+                    f"Package '{req.name}' requires Python "
+                    f"{requires_python}, which does not include Python {target_python}"
+                )
+    except Exception:
+        return None
+
+    return None
+
+
+def validate_requirements_txt(path: Path, target_python: str = "3.11") -> list[str]:
+    """
+    Validate requirements.txt for format + Python compatibility.
+
+    Checks:
+    1. File is valid requirements.txt format (not TOML/other format)
+    2. Each requirement line is parseable
+    3. Environment markers that exclude target Python
+    4. PyPI Requires-Python metadata for each package
+
+    Returns a list of error/warning messages (empty if valid).
+    """
+    errors = []
+
+    try:
+        content = path.read_text(encoding="utf-8")
+    except Exception as e:
+        errors.append(f"Failed to read requirements.txt: {e}")
+        return errors
+
+    # Check if it's accidentally a TOML file (common mistake)
+    stripped = content.strip()
+    if stripped.startswith("[") and "]" in stripped.split("\n")[0]:
+        errors.append("requirements.txt appears to be in TOML format, not pip requirements format")
+        errors.append(
+            "Hint: requirements.txt should have one package per line, e.g., 'requests>=2.28.0'"
+        )
+        return errors
+
+    # Try to parse requirements using packaging library
+    try:
+        from packaging.markers import default_environment
+        from packaging.requirements import InvalidRequirement, Requirement
+        from packaging.version import Version
+    except ImportError:
+        # packaging not available, skip detailed validation
+        return []
+
+    try:
+        target_version = Version(target_python)
+    except Exception:
+        errors.append(f"Invalid target Python version: {target_python}")
+        return errors
+
+    # Environment for evaluating markers like `python_version < "3.11"`
+    env = default_environment()
+    env["python_version"] = f"{target_version.major}.{target_version.minor}"
+    env["python_full_version"] = str(target_version)
+
+    seen_projects: set[str] = set()
+
+    for lineno, raw_line in enumerate(content.splitlines(), start=1):
+        line = raw_line.strip()
+
+        # Skip empty lines and comments
+        if not line or line.startswith("#"):
+            continue
+
+        # Skip options like -e, --index-url, etc.
+        if line.startswith("-"):
+            continue
+
+        # Try to parse as a requirement
+        try:
+            req = Requirement(line)
+        except InvalidRequirement as e:
+            errors.append(f"Line {lineno}: Invalid requirement '{line}' - {e}")
+            continue
+
+        # 1) Marker-based incompatibility (e.g., `foo; python_version < "3.11"`)
+        if req.marker is not None and not req.marker.evaluate(env):
+            # This requirement is explicitly excluded for Python 3.11
+            errors.append(
+                f"Line {lineno}: Requirement '{line}' is excluded for Python "
+                f"{target_python} due to marker '{req.marker}'"
+            )
+
+        # 2) PyPI Requires-Python compatibility check (once per project)
+        project_key = req.name.lower()
+        if project_key not in seen_projects:
+            seen_projects.add(project_key)
+            compat_msg = check_pypi_python_compatibility(req, target_python)
+            if compat_msg:
+                errors.append(f"Line {lineno}: {compat_msg}")
+
+    return errors
+
+
+def get_thinking_mode_display(config: models.ProjectConfig) -> str:
+    """Get a human-readable display string for the thinking mode."""
+    thinking_mode = config.rollout.thinking_mode if config.rollout else None
+    model = config.model.path
+
+    # GPT-OSS: Reasoning models with levels
+    if model in ["openai/gpt-oss-120b", "openai/gpt-oss-20b"]:
+        mode_map = {
+            "disabled": "Reasoning Off",
+            "easy": "Reasoning Low",
+            "hard": "Reasoning High",
+        }
+        return mode_map.get(thinking_mode, "Reasoning Medium")
+
+    # Hybrid models: Qwen3, DeepSeek
+    if model in [
+        "Qwen/Qwen3-30B-A3B",
+        "Qwen/Qwen3-32B",
+        "Qwen/Qwen3-8B",
+        "Qwen/Qwen3-30B-A3B-Base",
+        "Qwen/Qwen3-8B-Base",
+        "deepseek-ai/DeepSeek-V3.1",
+        "deepseek-ai/DeepSeek-V3.1-Base",
+    ]:
+        if thinking_mode == "disabled":
+            return "Reasoning Off"
+        else:
+            return "Reasoning On"
+
+    # Instruct models: no thinking support
+    if model in [
+        "Qwen/Qwen3-235B-A22B-Instruct-2507",
+        "Qwen/Qwen3-30B-A3B-Instruct-2507",
+        "Qwen/Qwen3-4B-Instruct-2507",
+        "meta-llama/Llama-3.3-70B-Instruct",
+        "meta-llama/Llama-3.1-8B-Instruct",
+    ]:
+        return "Reasoning Off"
+
+    # Base Llama models
+    if model in [
+        "meta-llama/Llama-3.1-70B",
+        "meta-llama/Llama-3.1-8B",
+        "meta-llama/Llama-3.2-3B",
+        "meta-llama/Llama-3.2-1B",
+    ]:
+        return "Reasoning Off"
+
+    return "Reasoning Off"
+
+
+# Simple session for API calls
+session = requests.Session()
+session.headers["User-Agent"] = "ReinforceNow-CLI/1.0"
+
+
+def api_request(
+    method: str, endpoint: str, base_url: str = None, authenticated: bool = True, **kwargs
+):
+    """Make API request."""
+    if authenticated:
+        require_auth()
+        headers = kwargs.pop("headers", {})
+        headers.update(auth.get_auth_headers())
+        kwargs["headers"] = headers
+
+    url = f"{base_url or 'https://www.reinforcenow.ai/api'}{endpoint}"
+    return getattr(session, method)(url, **kwargs)
+
+
+# ========== Auth Commands ==========
+
+
+@click.command()
+@click.option("--force", "-f", is_flag=True, help="Force new login even if already authenticated")
+@click.pass_context
+def login(ctx, force: bool):
+    """Login to ReinforceNow platform.
+
+    Uses OAuth device flow for authentication.
+    """
+    base_url = ctx.obj.get("api_url", "https://www.reinforcenow.ai/api")
+
+    if not force and auth.is_authenticated():
+        click.echo(click.style("✓ Already authenticated", fg="green"))
+        click.echo("Use --force to re-authenticate")
+        return
+
+    # Get device code
+    try:
+        response = api_request(
+            "post", "/auth/device/code", base_url, json={"client_id": "cli"}, authenticated=False
+        )
+        response.raise_for_status()
+        device = models.DeviceCode(**response.json())
+    except ValidationError as e:
+        raise click.ClickException(f"Invalid response from server: {e}")
+    except requests.RequestException as e:
+        raise click.ClickException(f"Failed to initiate login: {e}")
+
+    # Construct the full URL with user_code parameter
+    verification_url = f"{device.verification_uri}?user_code={device.user_code}"
+
+    click.echo(f"\n{click.style('Opening browser:', fg='cyan')} {verification_url}")
+    click.echo(
+        f"{click.style('Enter code:', fg='cyan')} {click.style(device.user_code, bold=True)}\n"
+    )
+    webbrowser.open(verification_url)
+
+    # Poll for token
+    start = time.time()
+    with click.progressbar(
+        length=device.expires_in // device.interval,
+        label="Waiting for authentication",
+        show_pos=False,
+    ) as bar:
+        while time.time() - start < device.expires_in:
+            time.sleep(device.interval)
+            bar.update(1)
+
+            try:
+                resp = api_request(
+                    "post",
+                    "/auth/device/token",
+                    base_url,
+                    json={"device_code": device.device_code},
+                    authenticated=False,
+                )
+                data = resp.json()
+            except requests.RequestException as e:
+                raise click.ClickException(f"Network error: {e}")
+
+            if resp.status_code == 200:
+                try:
+                    token = models.Token(**data)
+                except ValidationError as e:
+                    raise click.ClickException(f"Invalid token response: {e}")
+
+                # Save credentials
+                auth.DATA_DIR.mkdir(parents=True, exist_ok=True)
+                with open(auth.CREDS_FILE, "w") as f:
+                    json.dump(
+                        {"api_key": token.access_token, "organization_id": token.organization_id}, f
+                    )
+                auth.CREDS_FILE.chmod(0o600)
+
+                bar.finish()
+                click.echo(click.style("\n✓ Login successful!", fg="green", bold=True))
+                return
+
+            try:
+                error = models.TokenError(**data)
+            except ValidationError:
+                raise click.ClickException(f"Unexpected response: {data}")
+
+            if error.error != "authorization_pending":
+                bar.finish()
+                raise click.ClickException(f"Authentication failed: {error.error}")
+
+    raise click.ClickException("Authentication timed out")
+
+
+@click.command()
+def logout():
+    """Logout from ReinforceNow."""
+    auth.logout()
+
+
+@click.command()
+def status():
+    """Check authentication status."""
+    if auth.is_authenticated():
+        click.echo(click.style("✓ Authenticated", fg="green"))
+        org_id = get_active_organization()
+        if org_id:
+            click.echo(f"Organization: {org_id}")
+    else:
+        click.echo(click.style("✗ Not authenticated", fg="red"))
+        raise click.ClickException("Run 'reinforcenow login' to authenticate")
+
+
+# ========== Org Commands ==========
+
+
+@click.group()
+def orgs():
+    """Manage organizations."""
+    pass
+
+
+@orgs.command("list")
+@click.pass_context
+def orgs_list(ctx):
+    """List all available organizations."""
+    base_url = ctx.obj.get("api_url", "https://www.reinforcenow.ai/api")
+
+    try:
+        response = api_request("get", "/auth/organizations", base_url)
+        response.raise_for_status()
+        orgs = models.Organizations(**response.json())
+    except ValidationError as e:
+        raise click.ClickException(f"Invalid organization data: {e}")
+    except requests.RequestException as e:
+        raise click.ClickException(f"Failed to fetch organizations: {e}")
+
+    if not orgs.organizations:
+        click.echo(click.style("No organizations found", fg="yellow"))
+        return
+
+    click.echo(click.style("Organizations:", bold=True))
+    for org in orgs.organizations:
+        if org.id == orgs.active_organization_id:
+            mark = click.style("✓", fg="green")
+            name = click.style(org.name, bold=True)
+        else:
+            mark = " "
+            name = org.name
+        click.echo(f"  [{mark}] {name} ({org.id}) - {org.role.value}")
+
+
+@orgs.command("select")
+@click.argument("org_id", required=True)
+def orgs_select(org_id: str):
+    """Set active organization by ID."""
+    require_auth()
+    auth.set_active_organization(org_id)
+    click.echo(click.style(f"✓ Active organization set to: {org_id}", fg="green"))
+
+
+# ========== Project Commands ==========
+
+
+@click.command()
+@click.option(
+    "--template",
+    "-t",
+    type=click.Choice(
+        [
+            "start",
+            "new",
+            "blank",
+            "sft",
+            "rl-single",
+            "rl-nextjs",
+            "rl-tools",
+            "deepseek-aha",
+            "tutorial-reward",
+            "tutorial-tool",
+        ]
+    ),
+    default="start",
+    help="Project template to use",
+)
+@click.option("--name", "-n", help="Project name (will prompt if not provided)")
+def init(template: str, name: str):
+    """Initialize a new ReinforceNow project."""
+    require_auth()
+
+    import shutil
+    from pathlib import Path
+
+    project_name = name or click.prompt("Project name", default="My RLHF Project", type=str)
+
+    # Create project directory in current location
+    project_dir = Path(".")
+
+    # Map "start" to "rl-single"
+    actual_template = "rl-single" if template == "start" else template
+
+    # Copy template files if template is specified (all except blank)
+    if actual_template != "blank":
+        template_dir = Path(__file__).parent.parent / "templates" / actual_template
+        if template_dir.exists():
+            # Get list of files to copy from template
+            files_to_copy = [f for f in template_dir.iterdir() if f.is_file()]
+            template_file_names = {f.name for f in files_to_copy}
+
+            # Define template-managed files (files that templates can provide)
+            managed_files = {
+                "config.yml",
+                "train.jsonl",
+                "rewards.py",
+                "requirements.txt",
+                "env.py",
+                "README.md",
+            }
+
+            # Find template-managed files that exist but aren't in the new template
+            extra_files = [
+                fname
+                for fname in managed_files
+                if (project_dir / fname).exists() and fname not in template_file_names
+            ]
+
+            # Check if any files will be overwritten
+            existing_files = [f.name for f in files_to_copy if (project_dir / f.name).exists()]
+
+            # Show warnings and confirmations
+            if extra_files:
+                click.echo(
+                    click.style(
+                        "\nWarning: The following files from previous template will be removed:",
+                        fg="yellow",
+                    )
+                )
+                for fname in extra_files:
+                    click.echo(f"  • {fname}")
+
+            if existing_files:
+                click.echo(
+                    click.style("\nWarning: The following files will be overwritten:", fg="yellow")
+                )
+                for fname in existing_files:
+                    click.echo(f"  • {fname}")
+
+            if (extra_files or existing_files) and not click.confirm(
+                "\nDo you want to continue?", default=True
+            ):
+                raise click.Abort()
+
+            # Remove extra template files
+            for fname in extra_files:
+                (project_dir / fname).unlink()
+                click.echo(f"  Removed {fname}")
+
+            # Copy all template files to current directory
+            for file in files_to_copy:
+                dest_file = project_dir / file.name
+                file_exists = dest_file.exists()
+                shutil.copy2(file, dest_file)
+                action = "Overwritten" if file_exists else "Created"
+                click.echo(f"  {action} {file.name}")
+        else:
+            click.echo(
+                click.style(
+                    f"Warning: Template '{template}' not found, using blank template", fg="yellow"
+                )
+            )
+
+    # Generate new IDs
+    project_id = str(uuid.uuid4())
+    dataset_id = str(uuid.uuid4())
+    org_id = get_active_organization()
+
+    # Update config.yml with actual IDs
+    config_path = project_dir / "config.yml"
+    if config_path.exists():
+        with open(config_path) as f:
+            config_data = yaml.safe_load(f)
+
+        # Update IDs and name
+        config_data["project_id"] = project_id
+        config_data["project_name"] = project_name
+        config_data["dataset_id"] = dataset_id
+        config_data["organization_id"] = org_id
+
+        with open(config_path, "w") as f:
+            yaml.dump(config_data, f, default_flow_style=False, sort_keys=False)
+    else:
+        # Create new config for blank template
+        config = models.ProjectConfig(
+            project_id=project_id,
+            project_name=project_name,
+            dataset_id=dataset_id,
+            dataset_type=models.DatasetType.RL,
+            organization_id=org_id,
+            data=models.DataConfig(batch_size=2, group_size=16),
+            model=models.ModelConfig(path="Qwen/Qwen3-8B"),
+            trainer=models.TrainerConfig(num_epochs=30),
+        )
+
+        with open(config_path, "w") as f:
+            yaml.dump(
+                config.model_dump(mode="json", exclude_none=True),
+                f,
+                default_flow_style=False,
+                sort_keys=False,
+            )
+        click.echo("  Created config.yml")
+
+    click.echo(click.style(f"\n✓ Created project: {project_name}", fg="green"))
+    click.echo(f"\nProject ID: {project_id}")
+    click.echo(f"Dataset ID: {dataset_id}")
+    click.echo("\nNext steps:")
+    click.echo("  1. Add training data to train.jsonl")
+    click.echo("  3. Run 'rnow run' to start training")
+
+
+@click.command()
+@click.option(
+    "--dir",
+    "-d",
+    default=".",
+    type=click.Path(exists=True, file_okay=False, dir_okay=True, path_type=Path),
+    help="Directory containing project files (default: current directory)",
+)
+@click.option(
+    "--name", "-n", default=None, help="Custom name for the training run (default: auto-generated)"
+)
+@click.option(
+    "--debug",
+    is_flag=True,
+    default=False,
+    help="Debug mode: upload files but don't start training job",
+)
+@click.pass_context
+def run(ctx, dir: Path, name: str, debug: bool):
+    """Submit project for training on ReinforceNow platform."""
+    require_auth()
+    base_url = ctx.obj.get("api_url", "https://www.reinforcenow.ai/api")
+
+    # Load and validate config
+    config_yml = dir / "config.yml"
+    config_json = dir / "config.json"
+
+    if config_yml.exists():
+        try:
+            with open(config_yml) as f:
+                config = models.ProjectConfig(**yaml.safe_load(f))
+        except FileNotFoundError:
+            raise click.ClickException(f"Config file not found in {dir}")
+        except ValidationError as e:
+            click.echo(format_validation_error(e))
+            raise click.ClickException("Please fix config.yml before submitting")
+        except yaml.YAMLError as e:
+            raise click.ClickException(f"Invalid YAML in config file: {e}")
+    elif config_json.exists():
+        try:
+            with open(config_json) as f:
+                config = models.ProjectConfig(**json.load(f))
+        except ValidationError as e:
+            click.echo(format_validation_error(e))
+            raise click.ClickException("Please fix config.json before submitting")
+        except json.JSONDecodeError as e:
+            raise click.ClickException(f"Invalid JSON in config file: {e}")
+    else:
+        raise click.ClickException(f"No config.yml or config.json found in {dir}")
+
+    if not config.organization_id:
+        config.organization_id = get_active_organization()
+
+    # Validate required files (all in the same directory now)
+    required_files = {
+        "train.jsonl": dir / "train.jsonl",
+    }
+
+    # Only require rewards.py for RL datasets
+    if config.dataset_type == models.DatasetType.RL:
+        required_files["rewards.py"] = dir / "rewards.py"
+
+    missing_files = []
+    empty_files = []
+    for file_name, path in required_files.items():
+        if not path.exists():
+            missing_files.append(f"  • {file_name} at {path}")
+        elif path.stat().st_size == 0:
+            if file_name == "train.jsonl":
+                empty_files.append(
+                    f"  • {file_name} is empty - please add training examples (one JSON object per line)"
+                )
+            elif file_name == "rewards.py":
+                empty_files.append(
+                    f"  • {file_name} is empty - please implement your reward function"
+                )
+
+    if missing_files:
+        click.echo(click.style("✗ Required files missing:", fg="red", bold=True))
+        for file_msg in missing_files:
+            click.echo(file_msg)
+        raise click.ClickException("Missing required files for training submission")
+
+    if empty_files:
+        click.echo(click.style("✗ Empty files detected:", fg="red", bold=True))
+        for file_msg in empty_files:
+            click.echo(file_msg)
+        raise click.ClickException("Please add content to empty files before submitting")
+
+    # Validate train.jsonl format (sample first 50 lines)
+    train_jsonl_path = dir / "train.jsonl"
+    if train_jsonl_path.exists() and train_jsonl_path.stat().st_size > 0:
+        jsonl_errors = validate_train_jsonl(train_jsonl_path, config.dataset_type)
+        if jsonl_errors:
+            click.echo(click.style("✗ Invalid train.jsonl format:", fg="red", bold=True))
+            for err in jsonl_errors:
+                click.echo(f"  • {err}")
+            raise click.ClickException("Please fix train.jsonl format before submitting")
+
+    # Validate requirements.txt if present (check format and Python 3.11 compatibility)
+    requirements_path = dir / "requirements.txt"
+    if requirements_path.exists() and requirements_path.stat().st_size > 0:
+        req_errors = validate_requirements_txt(requirements_path, target_python="3.11")
+        if req_errors:
+            click.echo(click.style("✗ Invalid requirements.txt:", fg="red", bold=True))
+            for err in req_errors:
+                click.echo(f"  • {err}")
+            raise click.ClickException("Please fix requirements.txt before submitting")
+
+    # Validate rewards.py if present (check signature on @reward functions)
+    if config.dataset_type == models.DatasetType.RL:
+        rewards_path = dir / "rewards.py"
+        if rewards_path.exists():
+            try:
+                from rnow.core.reward import validate_rewards_file
+
+                errors = validate_rewards_file(rewards_path)
+                if errors:
+                    click.echo(click.style("✗ Invalid rewards.py:", fg="red", bold=True))
+                    for err in errors:
+                        click.echo(f"  • {err}")
+                    raise click.ClickException("Please fix rewards.py before submitting")
+            except ImportError:
+                pass  # Skip validation if module not available
+
+            # Validate that rewards referenced in train.jsonl exist in rewards.py
+            ref_errors = validate_reward_references(train_jsonl_path, rewards_path)
+            if ref_errors:
+                click.echo(click.style("✗ Reward mismatch:", fg="red", bold=True))
+                for err in ref_errors:
+                    click.echo(f"  • {err}")
+                raise click.ClickException(
+                    "Please ensure reward names in train.jsonl match functions in rewards.py"
+                )
+
+    # Validate env.py if present (check for docstrings on @tool functions)
+    env_path = dir / "env.py"
+    if env_path.exists() and env_path.stat().st_size > 0:
+        try:
+            from rnow.core.tool import validate_tools_file
+
+            errors = validate_tools_file(env_path)
+            if errors:
+                click.echo(click.style("✗ Invalid env.py:", fg="red", bold=True))
+                for err in errors:
+                    click.echo(f"  • {err}")
+                raise click.ClickException("Please fix env.py before submitting")
+        except ImportError:
+            pass  # Skip validation if module not available
+
+    # ReinforceNow teal: #14B8A6
+    TEAL = "\033[38;2;20;184;166m"
+    RESET = "\033[0m"
+
+    # Start cube spinner early
+    spinner = CubeSpinner()
+
+    # Check if train.jsonl needs blob upload (>4MB)
+    train_path = dir / "train.jsonl"
+    train_size = train_path.stat().st_size
+    dataset_url = None
+
+    if train_size > MAX_INLINE_BYTES:
+        spinner.start()
+        try:
+            _, blob_info = maybe_upload_to_blob(base_url, train_path, config.dataset_id)
+            if blob_info:
+                dataset_url = blob_info.get("url")
+        except Exception as e:
+            spinner.stop()
+            raise click.ClickException(f"Failed to upload large dataset: {e}")
+
+    # Upload files
+    files = []
+
+    # Add config file
+    if config_yml.exists():
+        files.append(
+            ("config_yml", ("config.yml", open(config_yml, "rb"), "application/octet-stream"))
+        )
+    elif config_json.exists():
+        files.append(
+            ("config_json", ("config.json", open(config_json, "rb"), "application/octet-stream"))
+        )
+
+    # Add required files (skip train.jsonl if uploaded to blob)
+    for file_name, path in required_files.items():
+        if file_name == "train.jsonl" and dataset_url:
+            # Skip - already uploaded to blob
+            continue
+        files.append(
+            (file_name.replace(".", "_"), (file_name, open(path, "rb"), "application/octet-stream"))
+        )
+
+    # Add optional files (all in the same directory now)
+    optional_files = {
+        "env.py": dir / "env.py",
+        "requirements.txt": dir / "requirements.txt",
+    }
+
+    for file_name, path in optional_files.items():
+        if path.exists():
+            files.append(
+                (
+                    file_name.replace(".", "_"),
+                    (file_name, open(path, "rb"), "application/octet-stream"),
+                )
+            )
+
+    # For multipart, we need to omit Content-Type so requests sets the boundary
+    headers = auth.get_auth_headers()
+    headers.pop("Content-Type", None)
+
+    # Include custom run name if provided
+    submit_data = {
+        "project_id": config.project_id,
+        "dataset_id": config.dataset_id,
+        "organization_id": config.organization_id,
+    }
+    if name:
+        submit_data["run_name"] = name
+
+    # Add dataset URL if uploaded to blob
+    if dataset_url:
+        submit_data["dataset_url"] = dataset_url
+
+    # Add debug flag if set
+    if debug:
+        submit_data["debug"] = "true"
+
+    # Start cube spinner if not already running (for small files)
+    if not spinner.running:
+        spinner.start()
+
+    run_url = None
+    error_msg = None
+    resolved_base_model = None
+    resolved_finetuned_model = None
+
+    try:
+        response = session.post(
+            f"{base_url}/training/submit",
+            data=submit_data,
+            files=files,
+            headers=headers,
+            stream=True,
+        )
+
+        if response.status_code != 200:
+            error_msg = f"Training submission failed: {response.text}"
+        else:
+            response.encoding = "utf-8"
+
+            for line in response.iter_lines(decode_unicode=True):
+                if line and line.startswith("data: "):
+                    msg = line[6:]
+
+                    if "View:" in msg:
+                        run_url = msg.split("View:")[-1].strip()
+                    elif "http" in msg and "View" not in msg:
+                        run_url = msg.split()[-1].strip()
+                    elif msg.startswith("❌") or "Error" in msg or "failed" in msg.lower():
+                        error_msg = msg
+                    # Capture resolved model info from server
+                    elif "Resuming from finetuned model:" in msg:
+                        resolved_finetuned_model = msg.split("Resuming from finetuned model:")[
+                            -1
+                        ].strip()
+                    elif "Base model:" in msg:
+                        resolved_base_model = msg.split("Base model:")[-1].strip()
+
+    except Exception as e:
+        error_msg = f"Request failed: {e}"
+    finally:
+        for _, (_, fh, _) in files:
+            fh.close()
+
+    # Show result
+    if error_msg:
+        spinner.stop()  # Clear cube on error
+        click.echo(click.style(f"✗ {error_msg}", fg="red", bold=True))
+        raise click.ClickException("Training submission failed")
+
+    # Stop spinner but keep cube visible on success
+    spinner.stop(keep_visible=True)
+
+    # Get display values
+    model_path = config.model.path if config.model else "Qwen/Qwen3-8B"
+    dataset_name = getattr(config, "dataset_name", None) or config.dataset_id
+    thinking_mode = get_thinking_mode_display(config)
+
+    # Build model display string
+    if resolved_finetuned_model and resolved_base_model:
+        # Resuming from a finetuned model - show both
+        model_display = f"{resolved_finetuned_model} ({TEAL}{thinking_mode}{RESET})"
+        base_model_display = f"  Base: {resolved_base_model}"
+    else:
+        # Fresh training from base model
+        model_display = f"{model_path} ({TEAL}{thinking_mode}{RESET})"
+        base_model_display = None
+
+    # Output completion messages below the cube
+    click.echo(f"Run started successfully {TEAL}✅{RESET}")
+    click.echo(f"  Project: {config.project_name}")
+    click.echo(f"  Model: {model_display}")
+    if base_model_display:
+        click.echo(base_model_display)
+    click.echo(f"  Dataset: {dataset_name}")
+    if run_url:
+        click.echo("\nView your experiment here:")
+        click.echo(f"{TEAL}{run_url}{RESET}")
+
+
+@click.command()
+@click.argument("model_id", required=True)
+@click.option(
+    "--output",
+    "-o",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Output directory for extracted checkpoint (default: ./<model_name>/)",
+)
+@click.option(
+    "--keep-archive", is_flag=True, default=False, help="Keep the tar archive after extraction"
+)
+@click.pass_context
+def download(ctx, model_id: str, output: Path, keep_archive: bool):
+    """Download a trained model by ID.
+
+    Downloads and extracts the model checkpoint (LoRA adapter weights).
+    The checkpoint is downloaded as a tar archive and automatically extracted.
+
+    Examples:
+
+        # Download and extract to ./My_Model/
+        rnow download abc123
+
+        # Download and extract to ./models/
+        rnow download abc123 --output ./models/
+
+        # Keep the tar archive after extraction
+        rnow download abc123 --keep-archive
+    """
+    import shutil
+    import tarfile
+    import tempfile
+    import urllib.request
+
+    base_url = ctx.obj.get("api_url", "https://www.reinforcenow.ai/api")
+
+    # Get download URL from API
+    click.echo(f"Fetching download URL for model: {model_id}...")
+
+    try:
+        response = api_request("get", f"/models/{model_id}/download", base_url)
+
+        if response.status_code == 404:
+            raise click.ClickException("Model not found or no file available for download")
+        elif response.status_code == 403:
+            raise click.ClickException(
+                "Access denied. You don't have permission to download this model."
+            )
+        elif response.status_code == 400:
+            data = response.json()
+            raise click.ClickException(data.get("message", "Cannot download this model"))
+
+        response.raise_for_status()
+        data = response.json()
+
+    except requests.RequestException as e:
+        raise click.ClickException(f"Failed to get download URL: {e}")
+
+    download_url = data.get("downloadUrl")
+    model_name = data.get("modelName", model_id)
+    model_size = int(data.get("modelSize", 0))
+
+    if not download_url:
+        raise click.ClickException("No download URL returned from server")
+
+    # Determine output directory
+    if output is None:
+        # Clean model name for directory
+        safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in model_name)
+        output = Path(safe_name)
+
+    # Create output directory
+    output.mkdir(parents=True, exist_ok=True)
+
+    # Download the file
+    click.echo(f"Downloading {model_name}...")
+
+    if model_size > 0:
+        size_mb = model_size / (1024 * 1024)
+        click.echo(f"  Size: {size_mb:.1f} MB")
+
+    # Use a temp file for the archive
+    with tempfile.NamedTemporaryFile(suffix=".tar", delete=False) as tmp_file:
+        archive_path = Path(tmp_file.name)
+
+    try:
+        # Download with progress bar
+        with urllib.request.urlopen(download_url, timeout=30) as response:
+            total_size = int(response.headers.get("Content-Length", model_size))
+
+            with (
+                click.progressbar(
+                    length=total_size if total_size > 0 else None,
+                    label="Downloading",
+                    show_pos=total_size > 0,
+                    show_percent=True,
+                    fill_char=click.style("#", fg=(20, 184, 166)),
+                ) as bar,
+                open(archive_path, "wb") as f,
+            ):
+                while True:
+                    chunk = response.read(8192)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    bar.update(len(chunk))
+
+        # Extract the archive
+        click.echo("Extracting checkpoint...")
+        try:
+            with tarfile.open(archive_path, "r") as tar:
+                members = tar.getmembers()
+                with click.progressbar(
+                    members,
+                    label="Extracting",
+                    show_percent=True,
+                    show_pos=True,
+                    fill_char=click.style("#", fg=(20, 184, 166)),
+                ) as bar:
+                    for member in bar:
+                        tar.extract(member, path=output)
+        except tarfile.TarError as e:
+            raise click.ClickException(f"Failed to extract archive: {e}")
+
+        # Optionally keep the archive
+        if keep_archive:
+            final_archive = output / f"{output.name}.tar"
+            shutil.move(str(archive_path), str(final_archive))
+            click.echo(f"  Archive saved to: {final_archive}")
+        else:
+            archive_path.unlink(missing_ok=True)
+
+    except urllib.request.URLError as e:
+        archive_path.unlink(missing_ok=True)
+        raise click.ClickException(f"Download failed: {e}")
+    except Exception as e:
+        archive_path.unlink(missing_ok=True)
+        raise click.ClickException(f"Download failed: {e}")
+
+    click.echo(
+        click.style(
+            f"\n✓ Model downloaded and extracted to: {output}/", fg=(20, 184, 166), bold=True
+        )
+    )
+
+    # List extracted files
+    files = list(output.iterdir())
+    if files:
+        click.echo("\nExtracted files:")
+        for f in files[:10]:  # Show first 10 files
+            click.echo(f"  • {f.name}")
+        if len(files) > 10:
+            click.echo(f"  ... and {len(files) - 10} more files")
+
+
+@click.command()
+@click.argument("run_id", required=True)
+@click.confirmation_option(prompt="Are you sure you want to stop this training run?")
+@click.pass_context
+def stop(ctx, run_id: str):
+    """Stop an active training run.
+
+    Requires the RUN_ID obtained from 'rnow run' command.
+    """
+    base_url = ctx.obj.get("api_url", "https://www.reinforcenow.ai/api")
+
+    try:
+        click.echo(f"Stopping training run: {run_id}...")
+        response = api_request("post", "/training/stop", base_url, json={"run_id": run_id})
+        response.raise_for_status()
+        data = response.json()
+    except requests.RequestException as e:
+        raise click.ClickException(f"Failed to stop training: {e}")
+
+    click.echo(click.style(f"✓ Training run stopped: {run_id}", fg="green"))
+
+    if data.get("duration_minutes"):
+        click.echo(f"  Duration: {data['duration_minutes']:.1f} minutes")
+    if data.get("charged_amount"):
+        click.echo(f"  Charged: ${data['charged_amount']:.2f}")

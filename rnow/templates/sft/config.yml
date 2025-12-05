@@ -1,0 +1,19 @@
+project_id: ""
+project_name: "SFT Training Project"
+dataset_id: ""
+dataset_type: sft
+organization_id: ""
+data:
+  train_file: train.jsonl
+  batch_size: 2
+  val_split: 0.2
+model:
+  path: Qwen/Qwen3-8B
+  qlora_rank: 32
+  name: "My SFT Model"
+  description: "Supervised fine-tuned model"
+trainer:
+  num_epochs: 40
+  learning_rate: 0.0001
+  save_step: 2
+  eval_step: 3
