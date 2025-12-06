@@ -9,8 +9,9 @@ on:
       - "v*"
 
 permissions:
-  id-token: write   # Required for PyPI Trusted Publishing
+  id-token: write
   contents: read
+  attestations: write
 
 jobs:
   build-and-publish:
@@ -36,3 +37,5 @@ jobs:
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          attestations: false
