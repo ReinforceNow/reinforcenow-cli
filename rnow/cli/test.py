@@ -383,6 +383,18 @@ async def _run_single_rollout(
     }
 
 
+def _check_test_dependencies():
+    """Check if optional test dependencies are installed."""
+    try:
+        import tinker_cookbook  # noqa: F401
+    except ImportError:
+        raise click.ClickException(
+            "The 'rnow test' command requires additional dependencies.\n"
+            "Install them with: pip install 'rnow[test]'\n\n"
+            "This installs tinker-cookbook which is needed for tokenization and rendering."
+        )
+
+
 @click.command(name="test")
 @click.option(
     "--dir",
@@ -460,6 +472,7 @@ def test(ctx, project_dir, num_rollouts, multi_turn, with_tools, model, api_url,
     original_handler = signal.signal(signal.SIGINT, handle_sigint)
 
     require_auth()
+    _check_test_dependencies()
     try:
         asyncio.run(
             _test_async(

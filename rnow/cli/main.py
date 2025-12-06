@@ -5,10 +5,18 @@ import click
 from rnow.cli.commands import download, init, login, logout, orgs, run, status, stop
 from rnow.cli.test import test
 
+try:
+    from importlib.metadata import version as get_version
+
+    __version__ = get_version("rnow")
+except Exception:
+    __version__ = "unknown"
+
 
 @click.group(context_settings={"help_option_names": ["-h", "--help"]})
 @click.option("--api-url", default="https://www.reinforcenow.ai/api", help="API base URL")
 @click.option("--debug", is_flag=True, hidden=True)
+@click.version_option(version=__version__, prog_name="rnow")
 @click.pass_context
 def cli(ctx, api_url, debug):
     """Train language models with reinforcement learning."""
