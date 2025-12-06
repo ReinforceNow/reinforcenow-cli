@@ -11,7 +11,7 @@ rnow = ["templates/*", "templates/start/*", "templates/new/*", "templates/**/*"]
 
 [project]
 name = "rnow"
-version = "0.1.4"
+version = "0.1.5"
 description = "ReinforceNow CLI - Reinforcement Learning platform command-line interface"
 readme = "README.md"
 requires-python = ">=3.10"
