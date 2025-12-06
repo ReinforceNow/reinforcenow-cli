@@ -14,7 +14,7 @@ name = "rnow"
 version = "0.1.3"
 description = "ReinforceNow CLI - Reinforcement Learning platform command-line interface"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 dependencies = [
     # Core CLI deps - lightweight, cross-platform
     "click>=8.0.0",
@@ -41,7 +41,7 @@ rnow = "rnow.cli.main:main"
 # =============================================================================
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py310"
 
 [tool.ruff.lint]
 select = [
@@ -69,7 +69,7 @@ known-first-party = ["rnow"]
 # Mypy configuration (type checking)
 # =============================================================================
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.10"
 warn_return_any = true
 warn_unused_ignores = true
 ignore_missing_imports = true
