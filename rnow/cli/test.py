@@ -29,9 +29,8 @@ _shutdown_requested = False
 from rnow.cli.auth import get_auth_headers
 from rnow.cli.commands import get_thinking_mode_display
 
-# ANSI color codes (matching commands.py)
-TEAL = "\033[38;2;20;184;166m"
-RESET = "\033[0m"
+# ReinforceNow teal: #14B8A6 as RGB tuple for click.style()
+TEAL_RGB = (20, 184, 166)
 
 
 class Spinner:
@@ -345,7 +344,7 @@ async def _run_single_rollout(
 
                 if verbose:
                     click.echo(
-                        f"    Tool {click.style(tool_name, fg='cyan')}: {str(tool_result)[:200]}"
+                        f"    Tool {click.style(tool_name, fg=TEAL_RGB)}: {str(tool_result)[:200]}"
                     )
 
             except json.JSONDecodeError as e:
@@ -381,6 +380,18 @@ async def _run_single_rollout(
         "tools_used": total_tool_calls,
         "conversation": conversation,
     }
+
+
+def _check_test_dependencies():
+    """Check if optional test dependencies are installed."""
+    try:
+        import tinker_cookbook  # noqa: F401
+    except ImportError:
+        raise click.ClickException(
+            "The 'rnow test' command requires additional dependencies.\n"
+            "Install them with: pip install 'rnow[test]'\n\n"
+            "This installs tinker-cookbook which is needed for tokenization and rendering."
+        )
 
 
 @click.command(name="test")
@@ -460,6 +471,7 @@ def test(ctx, project_dir, num_rollouts, multi_turn, with_tools, model, api_url,
     original_handler = signal.signal(signal.SIGINT, handle_sigint)
 
     require_auth()
+    _check_test_dependencies()
     try:
         asyncio.run(
             _test_async(
@@ -548,7 +560,7 @@ async def _test_async(
 
     # Display model info with reasoning mode (same format as rnow run)
     thinking_display = get_thinking_mode_display(config)
-    click.echo(f"Model: {model_name} ({TEAL}{thinking_display}{RESET})")
+    click.echo(f"Model: {model_name} ({click.style(thinking_display, fg=TEAL_RGB)})")
     click.echo()
 
     try:
@@ -642,7 +654,7 @@ async def _test_async(
                 click.echo(f"  {tag} {content}")
             reward_str = ", ".join(f"{k}={v:.3f}" for k, v in result["rewards"].items())
             click.echo(
-                f"  {click.style('reward', fg='green')}={total_reward:.3f} "
+                f"  {click.style('reward', fg=TEAL_RGB)}={total_reward:.3f} "
                 f"| turns={result['turns']} "
                 f"| tools_used={result['tools_used']} "
                 f"| [{reward_str}]"
@@ -662,8 +674,8 @@ async def _test_async(
     if rewards:
         mean_reward = sum(rewards) / len(rewards)
         click.echo()
-        click.echo(f"Mean reward: {TEAL}{mean_reward:.3f}{RESET}")
-        click.echo(f"Latency: {TEAL}{total_time:.1f}s{RESET}")
+        click.echo(f"Mean reward: {click.style(f'{mean_reward:.3f}', fg=TEAL_RGB)}")
+        click.echo(f"Latency: {click.style(f'{total_time:.1f}s', fg=TEAL_RGB)}")
     else:
         click.echo(click.style("\nNo successful rollouts completed.", fg="yellow"))
 
@@ -671,4 +683,6 @@ async def _test_async(
     if flush_result and flush_result.get("flushed"):
         amount_cents = flush_result.get("amountCents", 0)
         total_tokens = flush_result.get("totalTokens", 0)
-        click.echo(f"Billing: {TEAL}${amount_cents/100:.2f}{RESET} ({total_tokens:,} tokens)")
+        click.echo(
+            f"Billing: {click.style(f'${amount_cents/100:.2f}', fg=TEAL_RGB)} ({total_tokens:,} tokens)"
+        )

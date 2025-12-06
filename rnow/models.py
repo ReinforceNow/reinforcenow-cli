@@ -196,6 +196,10 @@ class RolloutConfig(BaseModel):
     thinking_mode: Literal["disabled", "easy", "medium", "hard"] | None = (
         None  # None = model default
     )
+    mcp_url: str | list[str] | None = Field(
+        default=None,
+        description="MCP server URL(s) for tools. Can be a single URL or a list of URLs. Can be used alongside env.py to combine both tool sources.",
+    )
 
 
 class TrainerConfig(BaseModel):

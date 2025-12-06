@@ -1,6 +1,9 @@
 # reinforcenow/cli/commands.py
 
+import itertools
 import json
+import sys
+import threading
 import time
 import uuid
 import webbrowser
@@ -10,6 +13,41 @@ import click
 import requests
 import yaml
 from pydantic import ValidationError
+
+# ReinforceNow teal: #14B8A6
+TEAL_RGB = (20, 184, 166)
+
+
+class Spinner:
+    """Simple spinner for CLI feedback."""
+
+    FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+
+    def __init__(self, message: str = ""):
+        self.message = message
+        self._stop_event = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def _spin(self):
+        for frame in itertools.cycle(self.FRAMES):
+            if self._stop_event.is_set():
+                break
+            sys.stdout.write(f"\r\033[K{frame} {self.message}")
+            sys.stdout.flush()
+            time.sleep(0.08)
+        sys.stdout.write("\r\033[K")
+        sys.stdout.flush()
+
+    def start(self):
+        self._stop_event.clear()
+        self._thread = threading.Thread(target=self._spin, daemon=True)
+        self._thread.start()
+
+    def stop(self):
+        self._stop_event.set()
+        if self._thread:
+            self._thread.join(timeout=0.5)
+
 
 from rnow import models
 from rnow.cli import auth
@@ -487,22 +525,20 @@ def login(ctx, force: bool):
     # Construct the full URL with user_code parameter
     verification_url = f"{device.verification_uri}?user_code={device.user_code}"
 
-    click.echo(f"\n{click.style('Opening browser:', fg='cyan')} {verification_url}")
+    click.echo(f"\n{click.style('Opening browser:', fg=TEAL_RGB)} {verification_url}")
     click.echo(
-        f"{click.style('Enter code:', fg='cyan')} {click.style(device.user_code, bold=True)}\n"
+        f"{click.style('Enter code:', fg=TEAL_RGB)} {click.style(device.user_code, bold=True)}\n"
     )
     webbrowser.open(verification_url)
 
-    # Poll for token
+    # Poll for token with spinner
+    spinner = Spinner("Waiting for authentication...")
+    spinner.start()
+
     start = time.time()
-    with click.progressbar(
-        length=device.expires_in // device.interval,
-        label="Waiting for authentication",
-        show_pos=False,
-    ) as bar:
+    try:
         while time.time() - start < device.expires_in:
             time.sleep(device.interval)
-            bar.update(1)
 
             try:
                 resp = api_request(
@@ -514,12 +550,14 @@ def login(ctx, force: bool):
                 )
                 data = resp.json()
             except requests.RequestException as e:
+                spinner.stop()
                 raise click.ClickException(f"Network error: {e}")
 
             if resp.status_code == 200:
                 try:
                     token = models.Token(**data)
                 except ValidationError as e:
+                    spinner.stop()
                     raise click.ClickException(f"Invalid token response: {e}")
 
                 # Save credentials
@@ -530,18 +568,21 @@ def login(ctx, force: bool):
                     )
                 auth.CREDS_FILE.chmod(0o600)
 
-                bar.finish()
-                click.echo(click.style("\n✓ Login successful!", fg="green", bold=True))
+                spinner.stop()
+                click.echo(click.style("✓ Login successful!", fg="green", bold=True))
                 return
 
             try:
                 error = models.TokenError(**data)
             except ValidationError:
+                spinner.stop()
                 raise click.ClickException(f"Unexpected response: {data}")
 
             if error.error != "authorization_pending":
-                bar.finish()
+                spinner.stop()
                 raise click.ClickException(f"Authentication failed: {error.error}")
+    finally:
+        spinner.stop()
 
     raise click.ClickException("Authentication timed out")
 
@@ -629,6 +670,7 @@ def orgs_select(org_id: str):
             "rl-single",
             "rl-nextjs",
             "rl-tools",
+            "mcp-tavily",
             "deepseek-aha",
             "tutorial-reward",
             "tutorial-tool",
@@ -909,7 +951,8 @@ def run(ctx, dir: Path, name: str, debug: bool):
 
     # Validate env.py if present (check for docstrings on @tool functions)
     env_path = dir / "env.py"
-    if env_path.exists() and env_path.stat().st_size > 0:
+    has_env_py = env_path.exists() and env_path.stat().st_size > 0
+    if has_env_py:
         try:
             from rnow.core.tool import validate_tools_file
 
@@ -922,9 +965,24 @@ def run(ctx, dir: Path, name: str, debug: bool):
         except ImportError:
             pass  # Skip validation if module not available
 
-    # ReinforceNow teal: #14B8A6
-    TEAL = "\033[38;2;20;184;166m"
-    RESET = "\033[0m"
+    # Check for MCP URL(s) in config
+    has_mcp_url = config.rollout is not None and config.rollout.mcp_url is not None
+    mcp_url_count = 0
+    if has_mcp_url:
+        mcp_url = config.rollout.mcp_url
+        mcp_url_count = len(mcp_url) if isinstance(mcp_url, list) else 1
+
+    # Show tool sources message
+    if has_env_py and has_mcp_url:
+        server_text = f"{mcp_url_count} server(s)" if mcp_url_count > 1 else "1 server"
+        click.echo(
+            click.style("Tools: ", fg=TEAL_RGB) + f"Using MCP ({server_text}) and env.py tools"
+        )
+    elif has_mcp_url:
+        server_text = f"{mcp_url_count} server(s)" if mcp_url_count > 1 else "1 server"
+        click.echo(click.style("Tools: ", fg=TEAL_RGB) + f"Using MCP ({server_text})")
+    elif has_env_py:
+        click.echo(click.style("Tools: ", fg=TEAL_RGB) + "Using env.py tools")
 
     # Start cube spinner early
     spinner = CubeSpinner()
@@ -1064,17 +1122,18 @@ def run(ctx, dir: Path, name: str, debug: bool):
     thinking_mode = get_thinking_mode_display(config)
 
     # Build model display string
+    thinking_styled = click.style(thinking_mode, fg=TEAL_RGB)
     if resolved_finetuned_model and resolved_base_model:
         # Resuming from a finetuned model - show both
-        model_display = f"{resolved_finetuned_model} ({TEAL}{thinking_mode}{RESET})"
+        model_display = f"{resolved_finetuned_model} ({thinking_styled})"
         base_model_display = f"  Base: {resolved_base_model}"
     else:
         # Fresh training from base model
-        model_display = f"{model_path} ({TEAL}{thinking_mode}{RESET})"
+        model_display = f"{model_path} ({thinking_styled})"
         base_model_display = None
 
     # Output completion messages below the cube
-    click.echo(f"Run started successfully {TEAL}✅{RESET}")
+    click.echo(f"Run started successfully {click.style('✅', fg=TEAL_RGB)}")
     click.echo(f"  Project: {config.project_name}")
     click.echo(f"  Model: {model_display}")
     if base_model_display:
@@ -1082,7 +1141,7 @@ def run(ctx, dir: Path, name: str, debug: bool):
     click.echo(f"  Dataset: {dataset_name}")
     if run_url:
         click.echo("\nView your experiment here:")
-        click.echo(f"{TEAL}{run_url}{RESET}")
+        click.echo(click.style(run_url, fg=TEAL_RGB))
 
 
 @click.command()

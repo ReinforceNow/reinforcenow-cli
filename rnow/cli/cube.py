@@ -18,6 +18,7 @@ HEIGHT = 18
 FRAME_DELAY = 0.04
 
 # ReinforceNow teal: #14B8A6
+TEAL_RGB = (20, 184, 166)
 TEAL = "\033[38;2;20;184;166m"
 RESET = "\033[0m"
 
