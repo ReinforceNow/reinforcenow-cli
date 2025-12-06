@@ -11,26 +11,27 @@ rnow = ["templates/*", "templates/start/*", "templates/new/*", "templates/**/*"]
 
 [project]
 name = "rnow"
-version = "0.9.5"
+version = "0.1.4"
 description = "ReinforceNow CLI - Reinforcement Learning platform command-line interface"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 dependencies = [
+    # Core CLI deps - lightweight, cross-platform
     "click>=8.0.0",
     "requests>=2.25.0",
     "httpx>=0.24.0",
-    "pydantic>=1.8.0",
+    "pydantic>=2.0.0",
     "pyyaml>=5.4.0",
-    "numpy<2",
-    "tinker>=0.2.2",
-    "tinker-cookbook @ git+https://github.com/thinking-machines-lab/tinker-cookbook.git@53c6c38a2b124751406cd97c9ef1911daaa51e97",
-    "pre-commit>=4.5.0",
+    "packaging>=21.0",
 ]
 
 [project.optional-dependencies]
+# Local testing with ML inference (requires torch)
+test = ["tinker-cookbook>=0.1.0"]
+# API server mode
 api = ["fastapi>=0.68.0", "uvicorn>=0.15.0"]
-test = ["openai>=1.0.0", "tqdm>=4.60.0"]
-all = ["fastapi>=0.68.0", "uvicorn>=0.15.0", "openai>=1.0.0", "tqdm>=4.60.0"]
+# All optional features
+all = ["tinker-cookbook>=0.1.0", "fastapi>=0.68.0", "uvicorn>=0.15.0"]
 
 [project.scripts]
 rnow = "rnow.cli.main:main"
@@ -40,7 +41,7 @@ rnow = "rnow.cli.main:main"
 # =============================================================================
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py310"
 
 [tool.ruff.lint]
 select = [
@@ -68,7 +69,7 @@ known-first-party = ["rnow"]
 # Mypy configuration (type checking)
 # =============================================================================
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.10"
 warn_return_any = true
 warn_unused_ignores = true
 ignore_missing_imports = true

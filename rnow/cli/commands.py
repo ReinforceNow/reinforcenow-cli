@@ -629,6 +629,7 @@ def orgs_select(org_id: str):
             "rl-single",
             "rl-nextjs",
             "rl-tools",
+            "mcp-tavily",
             "deepseek-aha",
             "tutorial-reward",
             "tutorial-tool",
@@ -909,7 +910,8 @@ def run(ctx, dir: Path, name: str, debug: bool):
 
     # Validate env.py if present (check for docstrings on @tool functions)
     env_path = dir / "env.py"
-    if env_path.exists() and env_path.stat().st_size > 0:
+    has_env_py = env_path.exists() and env_path.stat().st_size > 0
+    if has_env_py:
         try:
             from rnow.core.tool import validate_tools_file
 
@@ -921,6 +923,25 @@ def run(ctx, dir: Path, name: str, debug: bool):
                 raise click.ClickException("Please fix env.py before submitting")
         except ImportError:
             pass  # Skip validation if module not available
+
+    # Check for MCP URL(s) in config
+    has_mcp_url = config.rollout is not None and config.rollout.mcp_url is not None
+    mcp_url_count = 0
+    if has_mcp_url:
+        mcp_url = config.rollout.mcp_url
+        mcp_url_count = len(mcp_url) if isinstance(mcp_url, list) else 1
+
+    # Show tool sources message
+    if has_env_py and has_mcp_url:
+        server_text = f"{mcp_url_count} server(s)" if mcp_url_count > 1 else "1 server"
+        click.echo(
+            click.style("Tools: ", fg="cyan") + f"Using MCP ({server_text}) and env.py tools"
+        )
+    elif has_mcp_url:
+        server_text = f"{mcp_url_count} server(s)" if mcp_url_count > 1 else "1 server"
+        click.echo(click.style("Tools: ", fg="cyan") + f"Using MCP ({server_text})")
+    elif has_env_py:
+        click.echo(click.style("Tools: ", fg="cyan") + "Using env.py tools")
 
     # ReinforceNow teal: #14B8A6
     TEAL = "\033[38;2;20;184;166m"
