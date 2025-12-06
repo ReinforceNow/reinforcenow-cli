@@ -1,0 +1,27 @@
+project_id: ""
+project_name: "MCP Tavily Search Agent"
+dataset_id: ""
+dataset_type: rl
+organization_id: ""
+data:
+  train_file: train.jsonl
+  batch_size: 2
+  group_size: 8
+model:
+  path: Qwen/Qwen3-8B
+  qlora_rank: 32
+  name: "Tavily Search Agent"
+  description: "Agent trained to search the web using Tavily MCP"
+algorithm:
+  loss_fn: ppo
+  adv_estimator: grpo
+  kl_penalty_coef: 0.01
+rollout:
+  max_turns: 3
+  max_tokens: 2048
+  termination_policy: last_tool
+  mcp_url: "https://mcp.tavily.com/mcp/?tavilyApiKey=YOUR_TAVILY_API_KEY"
+trainer:
+  num_epochs: 20
+  learning_rate: 0.0001
+  save_step: 10
