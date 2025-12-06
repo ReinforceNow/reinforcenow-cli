@@ -11,7 +11,7 @@ rnow = ["templates/*", "templates/start/*", "templates/new/*", "templates/**/*"]
 
 [project]
 name = "rnow"
-version = "0.9.5"
+version = "0.1.0"
 description = "ReinforceNow CLI - Reinforcement Learning platform command-line interface"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -23,8 +23,7 @@ dependencies = [
     "pyyaml>=5.4.0",
     "numpy<2",
     "tinker>=0.2.2",
-    "tinker-cookbook @ git+https://github.com/thinking-machines-lab/tinker-cookbook.git@53c6c38a2b124751406cd97c9ef1911daaa51e97",
-    "pre-commit>=4.5.0",
+    "tinker-cookbook==0.1.0",
 ]
 
 [project.optional-dependencies]
