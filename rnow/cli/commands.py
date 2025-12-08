@@ -687,7 +687,7 @@ def init(template: str, name: str):
     import shutil
     from pathlib import Path
 
-    # Next.js style prompt: bold question › dim default
+    # Next.js style prompts: bold question › dim default
     if name:
         project_name = name
     else:
@@ -702,6 +702,19 @@ def init(template: str, name: str):
         )
         if not project_name:
             project_name = default_name
+
+    # Dataset name prompt
+    default_dataset = "train"
+    dataset_prompt = (
+        click.style("What is your dataset named?", bold=True)
+        + click.style(" › ", dim=True)
+        + click.style(default_dataset, dim=True)
+    )
+    dataset_name = click.prompt(
+        dataset_prompt, default=default_dataset, show_default=False, prompt_suffix=""
+    )
+    if not dataset_name:
+        dataset_name = default_dataset
 
     # Create project directory in current location
     project_dir = Path(".")
@@ -744,7 +757,12 @@ def init(template: str, name: str):
                     click.style("Files to modify:", bold=True)
                     + click.style(f" {', '.join(all_affected)}", dim=True)
                 )
-                if not click.confirm("Continue?", default=True):
+                confirm_prompt = (
+                    click.style("Continue?", bold=True) + click.style(" {yes}", dim=True) + "/no"
+                )
+                if not click.confirm(
+                    confirm_prompt, default=True, show_default=False, prompt_suffix=" "
+                ):
                     raise click.Abort()
 
             # Remove extra template files (silently)
@@ -776,6 +794,7 @@ def init(template: str, name: str):
         config_data["project_id"] = project_id
         config_data["project_name"] = project_name
         config_data["dataset_id"] = dataset_id
+        config_data["dataset_name"] = dataset_name
         config_data["organization_id"] = org_id
 
         with open(config_path, "w") as f:
@@ -786,6 +805,7 @@ def init(template: str, name: str):
             project_id=project_id,
             project_name=project_name,
             dataset_id=dataset_id,
+            dataset_name=dataset_name,
             dataset_type=models.DatasetType.RL,
             organization_id=org_id,
             data=models.DataConfig(batch_size=2, group_size=16),
