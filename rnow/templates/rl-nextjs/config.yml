@@ -7,7 +7,7 @@ organization_id: ""
 data:
   train_file: train.jsonl
   batch_size: 4
-  group_size: 8
+  group_size: 16
 model:
   path: Qwen/Qwen3-8B
   qlora_rank: 32
@@ -19,9 +19,9 @@ algorithm:
   kl_penalty_coef: 0.01
 rollout:
   max_turns: 1
-  max_tokens: 2048
+  max_tokens: 16384
   termination_policy: max_turns
 trainer:
-  num_epochs: 50
+  num_epochs: 10
   learning_rate: 0.0001
-  save_step: 10
+  save_step: 833

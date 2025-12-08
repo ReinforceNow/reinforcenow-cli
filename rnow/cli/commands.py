@@ -339,6 +339,14 @@ def validate_train_jsonl(
                         f"Line {line_num}: Missing required 'rewards' field for RL dataset"
                     )
 
+                # Validate optional 'tools' field if present
+                if "tools" in record:
+                    tools = record["tools"]
+                    if not isinstance(tools, list):
+                        errors.append(f"Line {line_num}: 'tools' must be a list of tool names")
+                    elif not all(isinstance(t, str) for t in tools):
+                        errors.append(f"Line {line_num}: 'tools' must contain only strings")
+
                 lines_checked += 1
                 if lines_checked >= sample_size:
                     break
@@ -1157,6 +1165,188 @@ def apply_overrides(config_data: dict, overrides: tuple[str, ...]) -> dict:
     return config_data
 
 
+def _submit_single_run(
+    ctx,
+    dir: Path,
+    config_data: dict,
+    base_url: str,
+    name: str | None,
+    debug: bool,
+    model_override: str | None,
+    epochs: int | None,
+    batch_size: int | None,
+    lr: float | None,
+    overrides: tuple[str, ...],
+) -> dict | None:
+    """
+    Submit a single training run. Returns dict with run_id and run_url on success.
+    Raises click.ClickException on failure.
+    """
+    # Build combined overrides from shorthand options + explicit overrides
+    all_overrides = list(overrides)
+
+    # Add shorthand options as overrides (skip model override - already set in config_data)
+    if epochs:
+        all_overrides.insert(0, f"trainer.num_epochs={epochs}")
+    if batch_size:
+        all_overrides.insert(0, f"data.batch_size={batch_size}")
+    if lr:
+        all_overrides.insert(0, f"trainer.learning_rate={lr}")
+
+    # Apply CLI overrides before validation
+    if all_overrides:
+        config_data = apply_overrides(config_data, tuple(all_overrides))
+
+    # Now validate the config with overrides applied
+    try:
+        config = models.ProjectConfig(**config_data)
+    except ValidationError as e:
+        raise click.ClickException(format_validation_error(e))
+
+    if not config.organization_id:
+        config.organization_id = get_active_organization()
+
+    # Validate required files
+    required_files = {"train.jsonl": dir / "train.jsonl"}
+    if config.dataset_type == models.DatasetType.RL:
+        required_files["rewards.py"] = dir / "rewards.py"
+
+    for file_name, path in required_files.items():
+        if not path.exists():
+            raise click.ClickException(f"Missing required file: {file_name}")
+        elif path.stat().st_size == 0:
+            raise click.ClickException(f"Empty file: {file_name}")
+
+    # Validate train.jsonl format
+    train_jsonl_path = dir / "train.jsonl"
+    if train_jsonl_path.exists() and train_jsonl_path.stat().st_size > 0:
+        jsonl_errors = validate_train_jsonl(train_jsonl_path, config.dataset_type)
+        if jsonl_errors:
+            raise click.ClickException(f"Invalid train.jsonl: {jsonl_errors[0]}")
+
+    # Validate rewards.py if present
+    if config.dataset_type == models.DatasetType.RL:
+        rewards_path = dir / "rewards.py"
+        if rewards_path.exists():
+            try:
+                from rnow.core.reward import validate_rewards_file
+
+                errors = validate_rewards_file(rewards_path)
+                if errors:
+                    raise click.ClickException(f"Invalid rewards.py: {errors[0]}")
+            except ImportError:
+                pass
+
+            ref_errors = validate_reward_references(train_jsonl_path, rewards_path)
+            if ref_errors:
+                raise click.ClickException(f"Reward mismatch: {ref_errors[0]}")
+
+    # Check if train.jsonl needs blob upload
+    train_path = dir / "train.jsonl"
+    train_size = train_path.stat().st_size
+    dataset_url = None
+
+    if train_size > MAX_INLINE_BYTES:
+        try:
+            _, blob_info = maybe_upload_to_blob(base_url, train_path, config.dataset_id)
+            if blob_info:
+                dataset_url = blob_info.get("url")
+        except Exception as e:
+            raise click.ClickException(f"Failed to upload large dataset: {e}")
+
+    # Upload files
+    files = []
+
+    # Add config file - create a temporary one with the modified config
+    import tempfile
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yml", delete=False) as tmp:
+        yaml.dump(config_data, tmp, default_flow_style=False, sort_keys=False)
+        tmp_config_path = Path(tmp.name)
+
+    files.append(
+        ("config_yml", ("config.yml", open(tmp_config_path, "rb"), "application/octet-stream"))
+    )
+
+    # Add required files (skip train.jsonl if uploaded to blob)
+    for file_name, path in required_files.items():
+        if file_name == "train.jsonl" and dataset_url:
+            continue
+        files.append(
+            (file_name.replace(".", "_"), (file_name, open(path, "rb"), "application/octet-stream"))
+        )
+
+    # Add optional files
+    optional_files = {"env.py": dir / "env.py", "requirements.txt": dir / "requirements.txt"}
+    for file_name, path in optional_files.items():
+        if path.exists():
+            files.append(
+                (
+                    file_name.replace(".", "_"),
+                    (file_name, open(path, "rb"), "application/octet-stream"),
+                )
+            )
+
+    headers = auth.get_auth_headers()
+    headers.pop("Content-Type", None)
+
+    submit_data = {
+        "project_id": config.project_id,
+        "dataset_id": config.dataset_id,
+        "organization_id": config.organization_id,
+    }
+    if name:
+        submit_data["run_name"] = name
+    if dataset_url:
+        submit_data["dataset_url"] = dataset_url
+    if debug:
+        submit_data["debug"] = "true"
+
+    run_url = None
+    run_id = None
+    error_msg = None
+
+    try:
+        response = session.post(
+            f"{base_url}/training/submit",
+            data=submit_data,
+            files=files,
+            headers=headers,
+            stream=True,
+        )
+
+        if response.status_code != 200:
+            error_msg = f"Training submission failed: {response.text}"
+        else:
+            response.encoding = "utf-8"
+            for line in response.iter_lines(decode_unicode=True):
+                if line and line.startswith("data: "):
+                    msg = line[6:]
+                    if "View:" in msg:
+                        run_url = msg.split("View:")[-1].strip()
+                        if run_url:
+                            run_id = run_url.rstrip("/").split("/")[-1]
+                    elif "http" in msg and "View" not in msg:
+                        run_url = msg.split()[-1].strip()
+                        if run_url:
+                            run_id = run_url.rstrip("/").split("/")[-1]
+                    elif msg.startswith("❌") or "Error" in msg or "failed" in msg.lower():
+                        error_msg = msg
+
+    except Exception as e:
+        error_msg = f"Request failed: {e}"
+    finally:
+        for _, (_, fh, _) in files:
+            fh.close()
+        # Clean up temp config file
+        tmp_config_path.unlink(missing_ok=True)
+
+    if error_msg:
+        raise click.ClickException(error_msg)
+
+    return {"run_id": run_id, "run_url": run_url}
+
+
 @click.command()
 @click.option(
     "--dir",
@@ -1238,6 +1428,17 @@ def run(
         rollout.max_turns       Max conversation turns for RL
         rollout.max_tokens      Max tokens per generation
         rollout.thinking_mode   Reasoning mode: disabled, easy, medium, hard
+
+    Multi-model training:
+        If model.path is a list in config.yml, a separate run will be submitted
+        for each model in the list.
+
+        Example config.yml:
+            model:
+              path:
+                - Qwen/Qwen3-8B
+                - Qwen/Qwen3-4B
+                - meta-llama/Llama-3.1-8B-Instruct
     """
     require_auth()
     base_url = ctx.obj.get("api_url", "https://www.reinforcenow.ai/api")
@@ -1265,6 +1466,69 @@ def run(
     else:
         raise click.ClickException(f"No config.yml or config.json found in {dir}")
 
+    # Check if model.path is a list (multi-model training)
+    model_paths = config_data.get("model", {}).get("path")
+    if isinstance(model_paths, list) and len(model_paths) > 1:
+        # Validate qlora_rank for each model before starting any runs
+        qlora_rank = config_data.get("model", {}).get("qlora_rank", 32)
+        for model_path in model_paths:
+            max_rank = models.get_max_lora_rank(model_path)
+            if qlora_rank > max_rank:
+                model_name = model_path.split("/")[-1] if "/" in model_path else model_path
+                raise click.ClickException(
+                    f"qlora_rank {qlora_rank} exceeds maximum {max_rank} for model {model_name}. "
+                    f"Set qlora_rank to {max_rank} or lower to train all models."
+                )
+
+        results = []
+        for model_path in model_paths:
+            model_name = model_path.split("/")[-1] if "/" in model_path else model_path
+
+            # Create a copy of config_data with single model path
+            single_config = json.loads(json.dumps(config_data))  # Deep copy
+            single_config["model"]["path"] = model_path
+
+            # Submit this model's run
+            try:
+                run_result = _submit_single_run(
+                    ctx=ctx,
+                    dir=dir,
+                    config_data=single_config,
+                    base_url=base_url,
+                    name=name,
+                    debug=debug,
+                    model_override=model,
+                    epochs=epochs,
+                    batch_size=batch_size,
+                    lr=lr,
+                    overrides=overrides,
+                )
+                results.append((model_path, run_result, None))
+            except click.ClickException as e:
+                results.append((model_path, None, str(e)))
+
+        # Show run IDs
+        click.echo(click.style("Run IDs:", bold=True))
+        for model_path, result, _error in results:
+            model_name = model_path.split("/")[-1] if "/" in model_path else model_path
+            if result and result.get("run_id"):
+                click.echo(f"  {model_name}: {result['run_id']}")
+            else:
+                click.echo(f"  {model_name}: {click.style('failed', fg='red')}")
+
+        # Show run URLs
+        successful = [r for r in results if r[1] is not None]
+        if successful:
+            click.echo()
+            click.echo(click.style("Run URLs:", bold=True))
+            for model_path, result, _ in successful:
+                model_name = model_path.split("/")[-1] if "/" in model_path else model_path
+                if result and result.get("run_url"):
+                    click.echo(f"  {model_name}: {click.style(result['run_url'], fg=TEAL_RGB)}")
+
+        return
+
+    # Single model training - continue with normal flow
     # Build combined overrides from shorthand options + explicit overrides
     all_overrides = list(overrides)
 

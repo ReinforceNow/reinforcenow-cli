@@ -1,44 +1,38 @@
-import os
-
 import requests
+from bs4 import BeautifulSoup
 
 from rnow.core.tool import tool
 
 
 @tool
 async def internet_search(query: str) -> dict:
-    """Search the web using Tavily and return up to 5 results (title, link, snippet)."""
-    api_key = os.environ.get("TAVILY_API_KEY")
-    if not api_key:
-        return {"results": [], "error": "TAVILY_API_KEY environment variable not set"}
-
+    """Search the web and return up to 5 results (title, link, snippet)."""
     try:
-        resp = requests.post(
-            "https://api.tavily.com/search",
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
+        resp = requests.get(
+            "https://en.wikipedia.org/w/api.php",
+            params={
+                "action": "query",
+                "list": "search",
+                "srsearch": query,
+                "format": "json",
+                "srlimit": 5,
             },
-            json={
-                "query": query,
-                "max_results": 5,
-            },
+            headers={"User-Agent": "ReinforceNow/1.0 (training platform)"},
             timeout=10,
         )
         resp.raise_for_status()
-    except requests.RequestException as e:
-        return {"results": [], "error": str(e)}
-
+    except requests.RequestException:
+        return []
     data = resp.json()
     results = []
-
-    for item in data.get("results", []):
+    for item in data.get("query", {}).get("search", []):
+        snippet = BeautifulSoup(item.get("snippet", ""), "html.parser").get_text()
+        title = item.get("title", "")
         results.append(
             {
-                "title": item.get("title", ""),
-                "link": item.get("url", ""),
-                "snippet": item.get("content", "")[:200],
+                "title": title,
+                "link": f"https://en.wikipedia.org/wiki/{title.replace(' ', '_')}",
+                "snippet": snippet[:200],
             }
         )
-
     return results
