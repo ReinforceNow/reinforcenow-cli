@@ -127,6 +127,31 @@ MAX_CONTEXT_WINDOW = 32768
 # Conservative max_tokens limit (leaves room for prompts)
 MAX_GENERATION_TOKENS = 30000
 
+# Maximum LoRA rank per model
+# Models not listed here default to 128
+MODEL_MAX_LORA_RANK: dict[str, int] = {
+    # Max 32
+    "openai/gpt-oss-120b": 32,
+    "openai/gpt-oss-20b": 32,
+    # Max 64
+    "Qwen/Qwen3-235B-A22B-Instruct-2507": 64,
+    "Qwen/Qwen3-30B-A3B-Instruct-2507": 64,
+    "Qwen/Qwen3-30B-A3B": 64,
+    "Qwen/Qwen3-30B-A3B-Base": 64,
+    "deepseek-ai/DeepSeek-V3.1": 64,
+    "deepseek-ai/DeepSeek-V3.1-Base": 64,
+    # Max 128 (default for all others)
+    # Qwen/Qwen3-32B, Qwen/Qwen3-8B*, Qwen/Qwen3-4B-Instruct-2507, all meta-llama/*
+}
+
+# Default max LoRA rank for models not in the dict
+DEFAULT_MAX_LORA_RANK = 128
+
+
+def get_max_lora_rank(model_path: str) -> int:
+    """Get the maximum LoRA rank for a given model."""
+    return MODEL_MAX_LORA_RANK.get(model_path, DEFAULT_MAX_LORA_RANK)
+
 
 class DataConfig(BaseModel):
     """Data configuration for training."""
@@ -240,7 +265,7 @@ class ProjectConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_config(self):
-        """Set defaults based on dataset_type."""
+        """Set defaults and validate based on dataset_type."""
         if self.dataset_type == DatasetType.RL:
             # Set RL defaults if not specified
             if self.algorithm is None:
@@ -251,5 +276,15 @@ class ProjectConfig(BaseModel):
             # Clear RL-specific configs for SFT
             self.algorithm = None
             self.rollout = None
+
+        # Validate qlora_rank against model-specific limits
+        # Only validate for known models (model IDs for finetuned models are validated server-side)
+        model_path = self.model.path
+        if "/" in model_path:  # Standard model path (not a model ID)
+            max_rank = get_max_lora_rank(model_path)
+            if self.model.qlora_rank > max_rank:
+                raise ValueError(
+                    f"qlora_rank {self.model.qlora_rank} exceeds maximum {max_rank} for model {model_path}"
+                )
 
         return self

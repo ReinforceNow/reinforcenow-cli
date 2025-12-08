@@ -3,54 +3,31 @@ Reward functions for Next.js ast-grep rules using ReinforceNow framework.
 Each reward function checks if the generated code matches the expected ast-grep pattern.
 """
 
+import re
+
 from ast_grep_py import Config, SgRoot
 
 from rnow.core import RewardArgs, reward
 
 
-def _extract_first_code_block(text: str) -> str:
-    """
-    Return the contents of the first ```typescript or ```tsx code block in text.
-    If not found, try <code>...</code> blocks.
-    If neither found, return the text as-is.
-    """
-    if not isinstance(text, str):
-        return ""
-
-    # Try markdown code blocks first
-    for marker in ["```typescript", "```tsx", "```ts", "```"]:
-        start = text.find(marker)
-        if start != -1:
-            start += len(marker)
-            end = text.find("```", start)
-            if end != -1:
-                return text[start:end].strip()
-
-    # Fallback to <code> tags
-    start = text.find("<code>")
-    if start != -1:
-        end = text.find("</code>", start + 6)
-        if end != -1:
-            return text[start + 6 : end].strip()
-
-    # Return the whole text if no markers found
-    return text.strip()
+@reward(precondition=True)
+async def code_block(args: RewardArgs, messages: list) -> float:
+    """Precondition: Response must contain a ```typescript/tsx code block."""
+    response = messages[-1].get("content", "")
+    match = re.search(r"```(?:typescript|tsx|ts)\n(.*?)```", response, re.DOTALL)
+    return 1.0 if match else 0.0
 
 
 @reward
 async def layout_syntax_1(args: RewardArgs, messages: list) -> float:
-    """
-    Reward for correct Next.js layout syntax with children prop.
-    Reference: layout-syntax-1.yml
-    """
-    response = messages[-1].get("content", "") if messages else ""
-    tsx_code = _extract_first_code_block(response)
-
-    if not tsx_code:
+    """Reward for correct Next.js layout syntax with children prop."""
+    response = messages[-1].get("content", "")
+    match = re.search(r"```(?:typescript|tsx|ts)\n(.*?)```", response, re.DOTALL)
+    if not match:
         return 0.0
 
     try:
-        root = SgRoot(tsx_code, "tsx").root()
+        root = SgRoot(match.group(1).strip(), "tsx").root()
         matches = root.find_all(
             Config(
                 rule={
@@ -71,18 +48,14 @@ async def layout_syntax_1(args: RewardArgs, messages: list) -> float:
 
 @reward
 async def server_dynamic_segment_1(args: RewardArgs, messages: list) -> float:
-    """
-    Reward for correct async param extraction in dynamic segment pages.
-    Reference: server-dynamic-segment-1.yml
-    """
-    response = messages[-1].get("content", "") if messages else ""
-    tsx_code = _extract_first_code_block(response)
-
-    if not tsx_code:
+    """Reward for correct async param extraction in dynamic segment pages."""
+    response = messages[-1].get("content", "")
+    match = re.search(r"```(?:typescript|tsx|ts)\n(.*?)```", response, re.DOTALL)
+    if not match:
         return 0.0
 
     try:
-        root = SgRoot(tsx_code, "tsx").root()
+        root = SgRoot(match.group(1).strip(), "tsx").root()
         matches = root.find_all(
             Config(
                 rule={
@@ -101,18 +74,14 @@ async def server_dynamic_segment_1(args: RewardArgs, messages: list) -> float:
 
 @reward
 async def server_dynamic_segment_2(args: RewardArgs, messages: list) -> float:
-    """
-    Reward for generateStaticParams pattern.
-    Reference: server-dynamic-segment-2.yml
-    """
-    response = messages[-1].get("content", "") if messages else ""
-    tsx_code = _extract_first_code_block(response)
-
-    if not tsx_code:
+    """Reward for generateStaticParams pattern."""
+    response = messages[-1].get("content", "")
+    match = re.search(r"```(?:typescript|tsx|ts)\n(.*?)```", response, re.DOTALL)
+    if not match:
         return 0.0
 
     try:
-        root = SgRoot(tsx_code, "tsx").root()
+        root = SgRoot(match.group(1).strip(), "tsx").root()
         matches = root.find_all(
             Config(
                 rule={
@@ -139,18 +108,14 @@ async def server_dynamic_segment_2(args: RewardArgs, messages: list) -> float:
 
 @reward
 async def server_search_params(args: RewardArgs, messages: list) -> float:
-    """
-    Reward for correct server searchParams handling.
-    Reference: server-search-params.yml
-    """
-    response = messages[-1].get("content", "") if messages else ""
-    tsx_code = _extract_first_code_block(response)
-
-    if not tsx_code:
+    """Reward for correct server searchParams handling."""
+    response = messages[-1].get("content", "")
+    match = re.search(r"```(?:typescript|tsx|ts)\n(.*?)```", response, re.DOTALL)
+    if not match:
         return 0.0
 
     try:
-        root = SgRoot(tsx_code, "tsx").root()
+        root = SgRoot(match.group(1).strip(), "tsx").root()
         matches = root.find_all(
             Config(
                 rule={
@@ -176,18 +141,14 @@ async def server_search_params(args: RewardArgs, messages: list) -> float:
 
 @reward
 async def use_client_directive(args: RewardArgs, messages: list) -> float:
-    """
-    Reward for correct 'use client' directive placement.
-    Reference: use-client-directive.yml
-    """
-    response = messages[-1].get("content", "") if messages else ""
-    tsx_code = _extract_first_code_block(response)
-
-    if not tsx_code:
+    """Reward for correct 'use client' directive placement."""
+    response = messages[-1].get("content", "")
+    match = re.search(r"```(?:typescript|tsx|ts)\n(.*?)```", response, re.DOTALL)
+    if not match:
         return 0.0
 
     try:
-        root = SgRoot(tsx_code, "tsx").root()
+        root = SgRoot(match.group(1).strip(), "tsx").root()
         matches = root.find_all(Config(rule={"kind": "string", "pattern": '"use client"'}))
         return 1.0 if matches else 0.0
     except Exception:
@@ -196,18 +157,14 @@ async def use_client_directive(args: RewardArgs, messages: list) -> float:
 
 @reward
 async def metadata_export(args: RewardArgs, messages: list) -> float:
-    """
-    Reward for valid metadata export.
-    Reference: metadata-export.yml
-    """
-    response = messages[-1].get("content", "") if messages else ""
-    tsx_code = _extract_first_code_block(response)
-
-    if not tsx_code:
+    """Reward for valid metadata export."""
+    response = messages[-1].get("content", "")
+    match = re.search(r"```(?:typescript|tsx|ts)\n(.*?)```", response, re.DOTALL)
+    if not match:
         return 0.0
 
     try:
-        root = SgRoot(tsx_code, "tsx").root()
+        root = SgRoot(match.group(1).strip(), "tsx").root()
         matches = root.find_all(Config(rule={"pattern": "export const metadata = { $$$BODY }"}))
         return 1.0 if matches else 0.0
     except Exception:
@@ -216,18 +173,14 @@ async def metadata_export(args: RewardArgs, messages: list) -> float:
 
 @reward
 async def error_boundary(args: RewardArgs, messages: list) -> float:
-    """
-    Reward for valid error boundary component.
-    Reference: error-boundary.yml
-    """
-    response = messages[-1].get("content", "") if messages else ""
-    tsx_code = _extract_first_code_block(response)
-
-    if not tsx_code:
+    """Reward for valid error boundary component."""
+    response = messages[-1].get("content", "")
+    match = re.search(r"```(?:typescript|tsx|ts)\n(.*?)```", response, re.DOTALL)
+    if not match:
         return 0.0
 
     try:
-        root = SgRoot(tsx_code, "tsx").root()
+        root = SgRoot(match.group(1).strip(), "tsx").root()
         matches = root.find_all(
             Config(
                 rule={
@@ -255,18 +208,14 @@ async def error_boundary(args: RewardArgs, messages: list) -> float:
 
 @reward
 async def not_found_boundary(args: RewardArgs, messages: list) -> float:
-    """
-    Reward for not-found boundary component.
-    Reference: not-found-boundary.yml
-    """
-    response = messages[-1].get("content", "") if messages else ""
-    tsx_code = _extract_first_code_block(response)
-
-    if not tsx_code:
+    """Reward for not-found boundary component."""
+    response = messages[-1].get("content", "")
+    match = re.search(r"```(?:typescript|tsx|ts)\n(.*?)```", response, re.DOTALL)
+    if not match:
         return 0.0
 
     try:
-        root = SgRoot(tsx_code, "tsx").root()
+        root = SgRoot(match.group(1).strip(), "tsx").root()
         matches = root.find_all(
             Config(rule={"pattern": "export default function NotFound() { $$$BODY }"})
         )
@@ -277,18 +226,14 @@ async def not_found_boundary(args: RewardArgs, messages: list) -> float:
 
 @reward
 async def loading_boundary(args: RewardArgs, messages: list) -> float:
-    """
-    Reward for loading boundary component.
-    Reference: loading-boundary.yml
-    """
-    response = messages[-1].get("content", "") if messages else ""
-    tsx_code = _extract_first_code_block(response)
-
-    if not tsx_code:
+    """Reward for loading boundary component."""
+    response = messages[-1].get("content", "")
+    match = re.search(r"```(?:typescript|tsx|ts)\n(.*?)```", response, re.DOTALL)
+    if not match:
         return 0.0
 
     try:
-        root = SgRoot(tsx_code, "tsx").root()
+        root = SgRoot(match.group(1).strip(), "tsx").root()
         matches = root.find_all(
             Config(rule={"pattern": "export default function Loading() { $$$BODY }"})
         )
@@ -299,18 +244,14 @@ async def loading_boundary(args: RewardArgs, messages: list) -> float:
 
 @reward
 async def template_component(args: RewardArgs, messages: list) -> float:
-    """
-    Reward for template component.
-    Reference: template-component.yml
-    """
-    response = messages[-1].get("content", "") if messages else ""
-    tsx_code = _extract_first_code_block(response)
-
-    if not tsx_code:
+    """Reward for template component."""
+    response = messages[-1].get("content", "")
+    match = re.search(r"```(?:typescript|tsx|ts)\n(.*?)```", response, re.DOTALL)
+    if not match:
         return 0.0
 
     try:
-        root = SgRoot(tsx_code, "tsx").root()
+        root = SgRoot(match.group(1).strip(), "tsx").root()
         matches = root.find_all(
             Config(
                 rule={
@@ -322,6 +263,183 @@ async def template_component(args: RewardArgs, messages: list) -> float:
                     ]
                 }
             )
+        )
+        return 1.0 if matches else 0.0
+    except Exception:
+        return 0.0
+
+
+@reward
+async def redirect_usage(args: RewardArgs, messages: list) -> float:
+    """Reward for usage of Next.js redirect() helper."""
+    response = messages[-1].get("content", "")
+    match = re.search(r"```(?:typescript|tsx|ts)\n(.*?)```", response, re.DOTALL)
+    if not match:
+        return 0.0
+
+    try:
+        root = SgRoot(match.group(1).strip(), "tsx").root()
+        matches = root.find_all(
+            Config(rule={"kind": "program", "has": {"pattern": "redirect(", "stopBy": "end"}})
+        )
+        return 1.0 if matches else 0.0
+    except Exception:
+        return 0.0
+
+
+@reward
+async def notfound_function_usage(args: RewardArgs, messages: list) -> float:
+    """Reward for usage of Next.js notFound() function."""
+    response = messages[-1].get("content", "")
+    match = re.search(r"```(?:typescript|tsx|ts)\n(.*?)```", response, re.DOTALL)
+    if not match:
+        return 0.0
+
+    try:
+        root = SgRoot(match.group(1).strip(), "tsx").root()
+        matches = root.find_all(
+            Config(rule={"kind": "program", "has": {"pattern": "notFound(", "stopBy": "end"}})
+        )
+        return 1.0 if matches else 0.0
+    except Exception:
+        return 0.0
+
+
+@reward
+async def generate_metadata_function(args: RewardArgs, messages: list) -> float:
+    """Reward for dynamic generateMetadata() function."""
+    response = messages[-1].get("content", "")
+    match = re.search(r"```(?:typescript|tsx|ts)\n(.*?)```", response, re.DOTALL)
+    if not match:
+        return 0.0
+
+    try:
+        root = SgRoot(match.group(1).strip(), "tsx").root()
+        matches = root.find_all(
+            Config(rule={"pattern": "export async function generateMetadata() { $$$BODY }"})
+        )
+        return 1.0 if matches else 0.0
+    except Exception:
+        return 0.0
+
+
+@reward
+async def generate_metadata_object(args: RewardArgs, messages: list) -> float:
+    """Reward for static metadata object export."""
+    response = messages[-1].get("content", "")
+    match = re.search(r"```(?:typescript|tsx|ts)\n(.*?)```", response, re.DOTALL)
+    if not match:
+        return 0.0
+
+    try:
+        root = SgRoot(match.group(1).strip(), "tsx").root()
+        matches = root.find_all(Config(rule={"pattern": "export const metadata = { $$$BODY }"}))
+        return 1.0 if matches else 0.0
+    except Exception:
+        return 0.0
+
+
+@reward
+async def route_handler_get(args: RewardArgs, messages: list) -> float:
+    """Reward for GET route handler in Next.js Route Handlers."""
+    response = messages[-1].get("content", "")
+    match = re.search(r"```(?:typescript|tsx|ts)\n(.*?)```", response, re.DOTALL)
+    if not match:
+        return 0.0
+
+    try:
+        root = SgRoot(match.group(1).strip(), "tsx").root()
+        matches = root.find_all(
+            Config(rule={"pattern": "export async function GET(request: Request) { $$$BODY }"})
+        )
+        return 1.0 if matches else 0.0
+    except Exception:
+        return 0.0
+
+
+@reward
+async def route_handler_post(args: RewardArgs, messages: list) -> float:
+    """Reward for POST route handler in Next.js Route Handlers."""
+    response = messages[-1].get("content", "")
+    match = re.search(r"```(?:typescript|tsx|ts)\n(.*?)```", response, re.DOTALL)
+    if not match:
+        return 0.0
+
+    try:
+        root = SgRoot(match.group(1).strip(), "tsx").root()
+        matches = root.find_all(
+            Config(rule={"pattern": "export async function POST(request: Request) { $$$BODY }"})
+        )
+        return 1.0 if matches else 0.0
+    except Exception:
+        return 0.0
+
+
+@reward
+async def default_page_component(args: RewardArgs, messages: list) -> float:
+    """Reward for default page component."""
+    response = messages[-1].get("content", "")
+    match = re.search(r"```(?:typescript|tsx|ts)\n(.*?)```", response, re.DOTALL)
+    if not match:
+        return 0.0
+
+    try:
+        root = SgRoot(match.group(1).strip(), "tsx").root()
+        matches = root.find_all(
+            Config(rule={"pattern": "export default function Page() { $$$BODY }"})
+        )
+        return 1.0 if matches else 0.0
+    except Exception:
+        return 0.0
+
+
+@reward
+async def client_component_detection(args: RewardArgs, messages: list) -> float:
+    """Reward for client components using 'use client' directive."""
+    response = messages[-1].get("content", "")
+    match = re.search(r"```(?:typescript|tsx|ts)\n(.*?)```", response, re.DOTALL)
+    if not match:
+        return 0.0
+
+    try:
+        root = SgRoot(match.group(1).strip(), "tsx").root()
+        matches = root.find_all(
+            Config(rule={"all": [{"kind": "string"}, {"pattern": '"use client"'}]})
+        )
+        return 1.0 if matches else 0.0
+    except Exception:
+        return 0.0
+
+
+@reward
+async def server_component_detection(args: RewardArgs, messages: list) -> float:
+    """Reward for server components (without 'use client')."""
+    response = messages[-1].get("content", "")
+    match = re.search(r"```(?:typescript|tsx|ts)\n(.*?)```", response, re.DOTALL)
+    if not match:
+        return 0.0
+
+    try:
+        root = SgRoot(match.group(1).strip(), "tsx").root()
+        has_function = root.find_all(Config(rule={"kind": "function_declaration"}))
+        has_use_client = root.find_all(Config(rule={"kind": "string", "pattern": '"use client"'}))
+        return 1.0 if has_function and not has_use_client else 0.0
+    except Exception:
+        return 0.0
+
+
+@reward
+async def parallel_route_segment(args: RewardArgs, messages: list) -> float:
+    """Reward for parallel route segments (e.g., @modal)."""
+    response = messages[-1].get("content", "")
+    match = re.search(r"```(?:typescript|tsx|ts)\n(.*?)```", response, re.DOTALL)
+    if not match:
+        return 0.0
+
+    try:
+        root = SgRoot(match.group(1).strip(), "tsx").root()
+        matches = root.find_all(
+            Config(rule={"kind": "program", "has": {"pattern": "@", "stopBy": "end"}})
         )
         return 1.0 if matches else 0.0
     except Exception:

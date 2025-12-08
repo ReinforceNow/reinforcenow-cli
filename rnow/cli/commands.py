@@ -55,6 +55,8 @@ from rnow.cli.blob import MAX_INLINE_BYTES, maybe_upload_to_blob
 from rnow.cli.common import get_active_organization, require_auth
 from rnow.cli.cube import CubeSpinner
 
+CONFIG_DOCS_URL = "https://reinforcenow.ai/docs/cli-reference/configuration"
+
 
 def format_validation_error(e: ValidationError) -> str:
     """
@@ -67,14 +69,25 @@ def format_validation_error(e: ValidationError) -> str:
         msg = error["msg"]
         error_type = error["type"]
 
-        lines.append(f"  Field: {click.style(loc, bold=True)}")
+        # For root-level validation errors, show a more specific field name
+        if not loc and error_type == "value_error":
+            if "qlora_rank" in msg:
+                loc = "model.qlora_rank"
+            elif "batch_size" in msg:
+                loc = "data"
 
-        # Get the input value if available
+        lines.append(f"  Field: {click.style(loc or '(root)', bold=True)}")
+
+        # Get the input value if available (skip for dict/complex types)
         if "input" in error:
             input_val = error["input"]
-            if isinstance(input_val, str) and len(input_val) > 50:
-                input_val = input_val[:50] + "..."
-            lines.append(f"    Got: {repr(input_val)}")
+            # Skip showing full config dicts
+            if isinstance(input_val, dict) and len(input_val) > 3:
+                pass  # Don't show large dicts
+            elif isinstance(input_val, str) and len(input_val) > 50:
+                lines.append(f"    Got: {repr(input_val[:50] + '...')}")
+            else:
+                lines.append(f"    Got: {repr(input_val)}")
 
         # Format the error message nicely
         if error_type == "literal_error":
@@ -86,17 +99,38 @@ def format_validation_error(e: ValidationError) -> str:
             lines.append("    Error: Required field is missing")
         elif error_type == "greater_than" or error_type == "greater_than_equal":
             lines.append(f"    Error: {msg}")
+        elif error_type == "less_than_equal":
+            lines.append(f"    Error: {msg}")
+            if "batch_size" in loc:
+                lines.append("    Hint: Maximum batch_size is 32")
+            elif "group_size" in loc:
+                lines.append("    Hint: Maximum group_size is 64")
+        elif error_type == "value_error" and "batch_size * group_size" in msg:
+            lines.append(f"    Error: {msg}")
+            lines.append("    Hint: Reduce batch_size or group_size to stay within the 2048 limit")
+        elif error_type == "value_error" and "qlora_rank" in msg:
+            # Clean up the error message (remove "Value error, " prefix)
+            clean_msg = msg.replace("Value error, ", "")
+            lines.append(f"    Error: {clean_msg}")
+            lines.append(
+                "    Hint: Different models have different max LoRA ranks (32, 64, or 128)"
+            )
         else:
             lines.append(f"    Error: {msg}")
 
         lines.append("")
 
+    lines.append(f"  See: {click.style(CONFIG_DOCS_URL, fg=TEAL_RGB, underline=True)}")
+    lines.append("")
+
     return "\n".join(lines)
 
 
-def get_rewards_referenced_in_jsonl(path: Path, sample_size: int = 100) -> set[str]:
+def get_rewards_referenced_in_jsonl(path: Path) -> set[str]:
     """
     Extract all reward names referenced in train.jsonl.
+
+    Scans the entire file to ensure all reward references are captured.
 
     Returns:
         Set of reward names referenced in the 'rewards' field across all samples.
@@ -105,7 +139,6 @@ def get_rewards_referenced_in_jsonl(path: Path, sample_size: int = 100) -> set[s
 
     try:
         with open(path, encoding="utf-8") as f:
-            lines_checked = 0
             for line in f:
                 stripped = line.strip()
                 if not stripped:
@@ -119,10 +152,6 @@ def get_rewards_referenced_in_jsonl(path: Path, sample_size: int = 100) -> set[s
                             rewards.update(record_rewards)
                 except json.JSONDecodeError:
                     continue
-
-                lines_checked += 1
-                if lines_checked >= sample_size:
-                    break
     except Exception:
         pass
 

@@ -7,7 +7,7 @@ where = ["."]
 include = ["rnow*"]
 
 [tool.setuptools.package-data]
-rnow = ["templates/*", "templates/start/*", "templates/new/*", "templates/**/*"]
+rnow = ["templates/**/*"]
 
 [project]
 name = "rnow"

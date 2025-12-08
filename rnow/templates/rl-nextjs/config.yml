@@ -1,6 +1,7 @@
 project_id: ""
 project_name: "Next.js Code Generation"
 dataset_id: ""
+dataset_name: "nextjs-components"
 dataset_type: rl
 organization_id: ""
 data:

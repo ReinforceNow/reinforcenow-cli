@@ -1,6 +1,7 @@
 project_id: ""
 project_name: "My RL Project"
 dataset_id: ""
+dataset_name: "train"
 dataset_type: rl
 organization_id: ""
 data:

@@ -1,3 +1,2 @@
-rnow>=0.9.5
 ast-grep-py>=0.29.3
-pydantic>=1.8.0
+pydantic>=2.0.0
