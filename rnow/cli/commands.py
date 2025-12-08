@@ -687,7 +687,21 @@ def init(template: str, name: str):
     import shutil
     from pathlib import Path
 
-    project_name = name or click.prompt("Project name", default="My RLHF Project", type=str)
+    # Next.js style prompt: bold question › dim default
+    if name:
+        project_name = name
+    else:
+        default_name = "rlvr-project"
+        prompt_text = (
+            click.style("What is your project named?", bold=True)
+            + click.style(" › ", dim=True)
+            + click.style(default_name, dim=True)
+        )
+        project_name = click.prompt(
+            prompt_text, default=default_name, show_default=False, prompt_suffix=""
+        )
+        if not project_name:
+            project_name = default_name
 
     # Create project directory in current location
     project_dir = Path(".")
@@ -723,46 +737,28 @@ def init(template: str, name: str):
             # Check if any files will be overwritten
             existing_files = [f.name for f in files_to_copy if (project_dir / f.name).exists()]
 
-            # Show warnings and confirmations
-            if extra_files:
+            # Show concise warning and confirm
+            if extra_files or existing_files:
+                all_affected = extra_files + existing_files
                 click.echo(
-                    click.style(
-                        "\nWarning: The following files from previous template will be removed:",
-                        fg="yellow",
-                    )
+                    click.style("Files to modify:", bold=True)
+                    + click.style(f" {', '.join(all_affected)}", dim=True)
                 )
-                for fname in extra_files:
-                    click.echo(f"  • {fname}")
+                if not click.confirm("Continue?", default=True):
+                    raise click.Abort()
 
-            if existing_files:
-                click.echo(
-                    click.style("\nWarning: The following files will be overwritten:", fg="yellow")
-                )
-                for fname in existing_files:
-                    click.echo(f"  • {fname}")
-
-            if (extra_files or existing_files) and not click.confirm(
-                "\nDo you want to continue?", default=True
-            ):
-                raise click.Abort()
-
-            # Remove extra template files
+            # Remove extra template files (silently)
             for fname in extra_files:
                 (project_dir / fname).unlink()
-                click.echo(f"  Removed {fname}")
 
-            # Copy all template files to current directory
+            # Copy all template files to current directory (silently)
             for file in files_to_copy:
                 dest_file = project_dir / file.name
-                file_exists = dest_file.exists()
                 shutil.copy2(file, dest_file)
-                action = "Overwritten" if file_exists else "Created"
-                click.echo(f"  {action} {file.name}")
         else:
             click.echo(
-                click.style(
-                    f"Warning: Template '{template}' not found, using blank template", fg="yellow"
-                )
+                click.style("Template not found:", bold=True)
+                + click.style(f" {template}, using blank template", dim=True)
             )
 
     # Generate new IDs
@@ -804,14 +800,14 @@ def init(template: str, name: str):
                 default_flow_style=False,
                 sort_keys=False,
             )
-        click.echo("  Created config.yml")
+        pass  # Config created silently
 
     click.echo(click.style(f"\n✓ Created project: {project_name}", fg="green"))
-    click.echo(f"\nProject ID: {project_id}")
-    click.echo(f"Dataset ID: {dataset_id}")
-    click.echo("\nNext steps:")
-    click.echo("  1. Add training data to train.jsonl")
-    click.echo("  3. Run 'rnow run' to start training")
+    click.echo()
+    click.echo(click.style("Next steps:", bold=True))
+    click.echo(f"  1. Edit {click.style('train.jsonl', underline=True)} with your training data")
+    click.echo(f"  2. Edit {click.style('rewards.py', underline=True)} with your reward functions")
+    click.echo(f"  3. Run {click.style('rnow run', bold=True)} to start training")
 
 
 def parse_override(override: str) -> tuple[list[str], any]:
@@ -1286,7 +1282,6 @@ def run(
 
     # Get display values
     model_path = config.model.path if config.model else "Qwen/Qwen3-8B"
-    dataset_name = getattr(config, "dataset_name", None) or config.dataset_id
     thinking_mode = get_thinking_mode_display(config)
 
     # Build model display string
@@ -1302,13 +1297,12 @@ def run(
 
     # Output completion messages below the cube
     click.echo(f"Run started successfully {click.style('✅', fg=TEAL_RGB)}")
-    if run_id:
-        click.echo(f"  Run ID: {run_id}")
     click.echo(f"  Project: {config.project_name}")
     click.echo(f"  Model: {model_display}")
     if base_model_display:
         click.echo(base_model_display)
-    click.echo(f"  Dataset: {dataset_name}")
+    if run_id:
+        click.echo(f"  Run ID: {run_id}")
     if run_url:
         click.echo("\nView your experiment here:")
         click.echo(click.style(run_url, fg=TEAL_RGB))
