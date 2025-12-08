@@ -814,6 +814,80 @@ def init(template: str, name: str):
     click.echo("  3. Run 'rnow run' to start training")
 
 
+def parse_override(override: str) -> tuple[list[str], any]:
+    """
+    Parse a single override string like 'algorithm.adv_estimator=grpo'.
+
+    Returns:
+        Tuple of (key_path, value) where key_path is a list of nested keys.
+    """
+    if "=" not in override:
+        raise click.ClickException(
+            f"Invalid override '{override}'. Use format: key=value or nested.key=value"
+        )
+
+    key, value = override.split("=", 1)
+    key_path = key.strip().split(".")
+
+    # Try to parse value as JSON (for numbers, bools, lists)
+    value = value.strip()
+    if value.lower() == "true":
+        return key_path, True
+    elif value.lower() == "false":
+        return key_path, False
+    elif value.lower() == "null" or value.lower() == "none":
+        return key_path, None
+
+    # Try numeric
+    try:
+        if "." in value:
+            return key_path, float(value)
+        else:
+            return key_path, int(value)
+    except ValueError:
+        pass
+
+    # Keep as string
+    return key_path, value
+
+
+def apply_overrides(config_data: dict, overrides: tuple[str, ...]) -> dict:
+    """
+    Apply CLI overrides to config data.
+
+    Args:
+        config_data: The loaded config dictionary
+        overrides: Tuple of override strings like ('algorithm.adv_estimator=grpo', 'model.path=Qwen/Qwen3-4B')
+
+    Returns:
+        Modified config data
+    """
+    for override in overrides:
+        key_path, value = parse_override(override)
+
+        # Navigate to the nested location
+        current = config_data
+        for key in key_path[:-1]:
+            if key not in current:
+                current[key] = {}
+            elif not isinstance(current[key], dict):
+                raise click.ClickException(
+                    f"Cannot override '{'.'.join(key_path)}': '{key}' is not a nested object"
+                )
+            current = current[key]
+
+        # Set the value
+        final_key = key_path[-1]
+        old_value = current.get(final_key, "<not set>")
+        current[final_key] = value
+
+        # Show what was changed
+        full_key = ".".join(key_path)
+        click.echo(f"  Override: {click.style(full_key, fg=TEAL_RGB)} = {value} (was: {old_value})")
+
+    return config_data
+
+
 @click.command()
 @click.option(
     "--dir",
@@ -831,9 +905,71 @@ def init(template: str, name: str):
     default=False,
     help="Debug mode: upload files but don't start training job",
 )
+@click.option(
+    "--model",
+    "-m",
+    default=None,
+    help="Override model path (e.g., Qwen/Qwen3-4B)",
+)
+@click.option(
+    "--epochs",
+    "-e",
+    default=None,
+    type=int,
+    help="Override number of training epochs",
+)
+@click.option(
+    "--batch-size",
+    "-b",
+    default=None,
+    type=int,
+    help="Override batch size (1-32)",
+)
+@click.option(
+    "--lr",
+    "--learning-rate",
+    default=None,
+    type=float,
+    help="Override learning rate",
+)
+@click.argument("overrides", nargs=-1)
 @click.pass_context
-def run(ctx, dir: Path, name: str, debug: bool):
-    """Submit project for training on ReinforceNow platform."""
+def run(
+    ctx,
+    dir: Path,
+    name: str,
+    debug: bool,
+    model: str,
+    epochs: int,
+    batch_size: int,
+    lr: float,
+    overrides: tuple[str, ...],
+):
+    """Submit project for training on ReinforceNow platform.
+
+    You can override any config.yml setting by passing key=value arguments:
+
+    \b
+    Examples:
+        rnow run model.path=Qwen/Qwen3-4B
+        rnow run algorithm.adv_estimator=grpo trainer.learning_rate=0.0002
+        rnow run data.batch_size=8 data.group_size=16 trainer.num_epochs=5
+        rnow run rollout.max_turns=3 rollout.max_tokens=4096
+
+    \b
+    Common overrides:
+        model.path              Model to train (e.g., Qwen/Qwen3-8B, Qwen/Qwen3-4B)
+        model.qlora_rank        LoRA rank (default: 32)
+        data.batch_size         Batch size (1-32)
+        data.group_size         Rollouts per prompt for RL (1-64)
+        trainer.num_epochs      Number of training epochs
+        trainer.learning_rate   Learning rate (default: 0.0001)
+        algorithm.adv_estimator Advantage estimator: grpo, gae, reinforce
+        algorithm.loss_fn       Loss function: ppo, importance_sampling
+        rollout.max_turns       Max conversation turns for RL
+        rollout.max_tokens      Max tokens per generation
+        rollout.thinking_mode   Reasoning mode: disabled, easy, medium, hard
+    """
     require_auth()
     base_url = ctx.obj.get("api_url", "https://www.reinforcenow.ai/api")
 
@@ -841,28 +977,54 @@ def run(ctx, dir: Path, name: str, debug: bool):
     config_yml = dir / "config.yml"
     config_json = dir / "config.json"
 
+    # First load raw config data
+    config_data = None
     if config_yml.exists():
         try:
             with open(config_yml) as f:
-                config = models.ProjectConfig(**yaml.safe_load(f))
+                config_data = yaml.safe_load(f)
         except FileNotFoundError:
             raise click.ClickException(f"Config file not found in {dir}")
-        except ValidationError as e:
-            click.echo(format_validation_error(e))
-            raise click.ClickException("Please fix config.yml before submitting")
         except yaml.YAMLError as e:
             raise click.ClickException(f"Invalid YAML in config file: {e}")
     elif config_json.exists():
         try:
             with open(config_json) as f:
-                config = models.ProjectConfig(**json.load(f))
-        except ValidationError as e:
-            click.echo(format_validation_error(e))
-            raise click.ClickException("Please fix config.json before submitting")
+                config_data = json.load(f)
         except json.JSONDecodeError as e:
             raise click.ClickException(f"Invalid JSON in config file: {e}")
     else:
         raise click.ClickException(f"No config.yml or config.json found in {dir}")
+
+    # Build combined overrides from shorthand options + explicit overrides
+    all_overrides = list(overrides)
+
+    # Add shorthand options as overrides
+    if model:
+        all_overrides.insert(0, f"model.path={model}")
+    if epochs:
+        all_overrides.insert(0, f"trainer.num_epochs={epochs}")
+    if batch_size:
+        all_overrides.insert(0, f"data.batch_size={batch_size}")
+    if lr:
+        all_overrides.insert(0, f"trainer.learning_rate={lr}")
+
+    # Apply CLI overrides before validation
+    if all_overrides:
+        click.echo(click.style("Applying config overrides:", bold=True))
+        config_data = apply_overrides(config_data, tuple(all_overrides))
+        click.echo()
+
+    # Now validate the config with overrides applied
+    try:
+        config = models.ProjectConfig(**config_data)
+    except ValidationError as e:
+        click.echo(format_validation_error(e))
+        if overrides:
+            click.echo(
+                click.style("\nHint: One of your overrides may have an invalid value.", fg="yellow")
+            )
+        raise click.ClickException("Please fix config before submitting")
 
     if not config.organization_id:
         config.organization_id = get_active_organization()
@@ -1065,6 +1227,7 @@ def run(ctx, dir: Path, name: str, debug: bool):
         spinner.start()
 
     run_url = None
+    run_id = None
     error_msg = None
     resolved_base_model = None
     resolved_finetuned_model = None
@@ -1089,8 +1252,13 @@ def run(ctx, dir: Path, name: str, debug: bool):
 
                     if "View:" in msg:
                         run_url = msg.split("View:")[-1].strip()
+                        # Extract run_id from URL (last path segment)
+                        if run_url:
+                            run_id = run_url.rstrip("/").split("/")[-1]
                     elif "http" in msg and "View" not in msg:
                         run_url = msg.split()[-1].strip()
+                        if run_url:
+                            run_id = run_url.rstrip("/").split("/")[-1]
                     elif msg.startswith("❌") or "Error" in msg or "failed" in msg.lower():
                         error_msg = msg
                     # Capture resolved model info from server
@@ -1134,6 +1302,8 @@ def run(ctx, dir: Path, name: str, debug: bool):
 
     # Output completion messages below the cube
     click.echo(f"Run started successfully {click.style('✅', fg=TEAL_RGB)}")
+    if run_id:
+        click.echo(f"  Run ID: {run_id}")
     click.echo(f"  Project: {config.project_name}")
     click.echo(f"  Model: {model_display}")
     if base_model_display:
