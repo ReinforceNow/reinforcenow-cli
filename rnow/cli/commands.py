@@ -91,9 +91,6 @@ def format_validation_error(e: ValidationError) -> str:
 
         lines.append("")
 
-    lines.append(
-        "Hint: Run 'rnow init -t sft' or 'rnow init -t rl' to see a valid config template."
-    )
     return "\n".join(lines)
 
 
@@ -169,6 +166,76 @@ def validate_reward_references(train_jsonl_path: Path, rewards_py_path: Path) ->
             errors.append("  No @reward functions found in rewards.py")
 
     return errors
+
+
+def estimate_tokens_from_chars(char_count: int) -> int:
+    """
+    Estimate token count from character count.
+    Uses ~2 characters per token as a conservative (overestimating) approximation
+    to avoid runtime context window errors.
+    """
+    return char_count // 2
+
+
+def get_max_prompt_tokens(path: Path, sample_size: int = 100) -> int:
+    """
+    Scan train.jsonl and return the maximum estimated prompt token count.
+    """
+    max_tokens = 0
+
+    try:
+        with open(path, encoding="utf-8") as f:
+            for i, line in enumerate(f):
+                if i >= sample_size:
+                    break
+
+                stripped = line.strip()
+                if not stripped:
+                    continue
+
+                try:
+                    record = json.loads(stripped)
+                except json.JSONDecodeError:
+                    continue
+
+                if not isinstance(record, dict) or "messages" not in record:
+                    continue
+
+                # Calculate total characters in all messages
+                messages = record.get("messages", [])
+                total_chars = 0
+                for msg in messages:
+                    if isinstance(msg, dict):
+                        content = msg.get("content", "")
+                        if isinstance(content, str):
+                            total_chars += len(content)
+                        # Add overhead for role, formatting (~20 tokens per message)
+                        total_chars += 60
+
+                estimated_tokens = estimate_tokens_from_chars(total_chars) + 50  # Add buffer
+                max_tokens = max(max_tokens, estimated_tokens)
+
+    except Exception:
+        pass
+
+    return max_tokens
+
+
+def validate_max_tokens_for_context(
+    max_tokens: int, max_prompt_tokens: int, context_window: int = models.MAX_CONTEXT_WINDOW
+) -> tuple[str | None, int]:
+    """
+    Validate that max_tokens + max_prompt_tokens fits within context window.
+    Returns (error_message, recommended_max_tokens). Error is None if valid.
+    """
+    total_required = max_tokens + max_prompt_tokens
+    available = context_window - max_prompt_tokens
+    if total_required > context_window:
+        return (
+            f"max_tokens ({max_tokens:,}) + prompt ({max_prompt_tokens:,}) = {total_required:,} > context window ({context_window:,})",
+            available,
+        )
+    return None, available
 
 
 def validate_train_jsonl(
@@ -630,25 +697,131 @@ def status(ctx):
 # ========== Org Commands ==========
 
 
+def _interactive_org_selector(organizations: list, active_org_id: str | None) -> str | None:
+    """Interactive organization selector using arrow keys."""
+    import sys
+
+    # Find initial selection index
+    selected_idx = 0
+    for i, org in enumerate(organizations):
+        if org.id == active_org_id:
+            selected_idx = i
+            break
+
+    def render():
+        lines = []
+        lines.append(click.style("Select organization:", bold=True))
+        lines.append("")
+        for i, org in enumerate(organizations):
+            is_selected = i == selected_idx
+            is_active = org.id == active_org_id
+            marker = "✓ " if is_active else "  "
+            role = click.style(f" ({org.role.value})", dim=True)
+
+            if is_selected:
+                # Highlight selected row with teal
+                prefix = click.style("› ", fg=TEAL_RGB, bold=True)
+                name = click.style(f"{marker}{org.name}", fg=TEAL_RGB, bold=True)
+                lines.append(f"{prefix}{name}{role}")
+            else:
+                prefix = "  "
+                if is_active:
+                    name = click.style(f"{marker}{org.name}", fg=TEAL_RGB)
+                else:
+                    name = f"{marker}{org.name}"
+                lines.append(f"{prefix}{name}{role}")
+        lines.append("")
+        lines.append(click.style("↑/↓ to move, Enter to select, q to cancel", dim=True))
+        return lines
+
+    try:
+        import termios
+        import tty
+
+        fd = sys.stdin.fileno()
+        old_settings = termios.tcgetattr(fd)
+
+        # Hide cursor and render initial output
+        sys.stdout.write("\033[?25l")
+        sys.stdout.flush()
+        lines = render()
+        line_count = len(lines)
+        click.echo("\n".join(lines))
+
+        try:
+            tty.setraw(fd)
+            while True:
+                ch = sys.stdin.read(1)
+                if ch == "\x1b":  # Escape sequence
+                    ch2 = sys.stdin.read(1)
+                    if ch2 == "[":
+                        ch3 = sys.stdin.read(1)
+                        if ch3 == "A":  # Up arrow
+                            selected_idx = (selected_idx - 1) % len(organizations)
+                        elif ch3 == "B":  # Down arrow
+                            selected_idx = (selected_idx + 1) % len(organizations)
+                    elif ch2 == "\x1b" or ch2 == "":  # Double escape or timeout
+                        # Restore terminal and clean up
+                        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+                        sys.stdout.write("\033[?25h\n")
+                        sys.stdout.flush()
+                        return None
+                elif ch == "k":  # Vim up
+                    selected_idx = (selected_idx - 1) % len(organizations)
+                elif ch == "j":  # Vim down
+                    selected_idx = (selected_idx + 1) % len(organizations)
+                elif ch == "\r" or ch == "\n":  # Enter
+                    # Restore terminal before returning
+                    termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+                    sys.stdout.write("\033[?25h\n")
+                    sys.stdout.flush()
+                    return organizations[selected_idx].id
+                elif ch == "q" or ch == "\x03":  # q or Ctrl+C
+                    # Restore terminal and clean up
+                    termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+                    sys.stdout.write("\033[?25h\n")
+                    sys.stdout.flush()
+                    return None
+
+                # Move cursor up to beginning of our output and clear
+                # Need to exit raw mode temporarily for proper output
+                termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+                sys.stdout.write(f"\033[{line_count}A")  # Move up
+                sys.stdout.write("\033[J")  # Clear from cursor to end of screen
+                lines = render()
+                sys.stdout.write("\n".join(lines) + "\n")
+                sys.stdout.flush()
+                tty.setraw(fd)
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+            sys.stdout.write("\033[?25h")  # Show cursor
+            sys.stdout.flush()
+    except (ImportError, termios.error):
+        # Fallback for non-Unix systems
+        sys.stdout.write("\033[?25h")  # Show cursor
+        sys.stdout.flush()
+        return None
+
+
 @click.command()
 @click.argument("org_id", required=False)
 @click.pass_context
 def orgs(ctx, org_id: str | None):
-    """List organizations or select one.
+    """Select active organization interactively or by ID.
 
-    Without arguments, lists all organizations.
-    With ORG_ID, sets that organization as active.
+    Without arguments, shows interactive selector.
+    With ORG_ID, sets that organization as active directly.
     """
     require_auth()
     base_url = ctx.obj.get("api_url", "https://www.reinforcenow.ai/api")
 
-    # If org_id provided, select it
+    # If org_id provided, select it directly
     if org_id:
         auth.set_active_organization(org_id)
         click.echo(click.style(f"✓ Active organization set to: {org_id}", fg=TEAL_RGB))
         return
 
-    # Otherwise list orgs
+    # Fetch organizations
     try:
         response = api_request("get", "/auth/organizations", base_url)
         response.raise_for_status()
@@ -662,24 +835,24 @@ def orgs(ctx, org_id: str | None):
         click.echo(click.style("No organizations found", fg="yellow"))
         return
 
-    click.echo()
-    click.echo(click.style("Organizations:", bold=True))
-    for org in orgs_data.organizations:
-        if org.id == orgs_data.active_organization_id:
-            # Active org in teal
-            name = click.style(f"  ✓ {org.name}", fg=TEAL_RGB, bold=True)
-            details = click.style(f" ({org.role.value})", dim=True)
-            click.echo(f"{name}{details}")
-        else:
-            name = f"    {org.name}"
-            details = click.style(f" ({org.role.value})", dim=True)
-            click.echo(f"{name}{details}")
-    click.echo()
-    click.echo(
-        click.style("Use ", dim=True)
-        + click.style("rnow orgs <ORG_ID>", fg=TEAL_RGB)
-        + click.style(" to switch", dim=True)
-    )
+    # Get locally stored active org
+    active_org_id = get_active_organization()
+
+    # Show interactive selector
+    selected_org_id = _interactive_org_selector(orgs_data.organizations, active_org_id)
+
+    if selected_org_id and selected_org_id != active_org_id:
+        auth.set_active_organization(selected_org_id)
+        # Find org name for display
+        org_name = next(
+            (org.name for org in orgs_data.organizations if org.id == selected_org_id),
+            selected_org_id,
+        )
+        click.echo()
+        click.echo(click.style(f"✓ Switched to: {org_name}", fg=TEAL_RGB))
+    elif selected_org_id:
+        click.echo()
+        click.echo(click.style("Organization unchanged", dim=True))
 
 
 # ========== Project Commands ==========
@@ -816,8 +989,28 @@ def init(template: str, name: str):
         config_data["dataset_name"] = dataset_name
         config_data["organization_id"] = org_id
 
+        # Reorder keys to ensure proper field ordering in output
+        key_order = [
+            "project_id",
+            "project_name",
+            "dataset_id",
+            "dataset_name",
+            "dataset_type",
+            "organization_id",
+            "data",
+            "model",
+            "algorithm",
+            "rollout",
+            "trainer",
+        ]
+        ordered_config = {k: config_data[k] for k in key_order if k in config_data}
+        # Add any remaining keys not in the order list
+        for k in config_data:
+            if k not in ordered_config:
+                ordered_config[k] = config_data[k]
+
         with open(config_path, "w") as f:
-            yaml.dump(config_data, f, default_flow_style=False, sort_keys=False)
+            yaml.dump(ordered_config, f, default_flow_style=False, sort_keys=False)
     else:
         # Create new config for blank template
         config = models.ProjectConfig(
@@ -1111,6 +1304,36 @@ def run(
             for err in jsonl_errors:
                 click.echo(f"  • {err}")
             raise click.ClickException("Please fix train.jsonl format before submitting")
+
+        # Validate max_tokens vs prompt size for RL
+        if config.dataset_type == models.DatasetType.RL and config.rollout:
+            max_prompt_tokens = get_max_prompt_tokens(train_jsonl_path)
+            if max_prompt_tokens > 0:
+                context_error, recommended = validate_max_tokens_for_context(
+                    config.rollout.max_tokens, max_prompt_tokens
+                )
+                if context_error:
+                    click.echo()
+                    click.echo(click.style("✗ Context window exceeded", fg="red", bold=True))
+                    click.echo()
+                    click.echo(
+                        f"  Your longest prompt in train.jsonl is ~{max_prompt_tokens:,} tokens."
+                    )
+                    click.echo(
+                        f"  With max_tokens={config.rollout.max_tokens:,}, the total exceeds"
+                    )
+                    click.echo(f"  the {models.MAX_CONTEXT_WINDOW:,} token context window.")
+                    click.echo()
+                    click.echo(
+                        click.style("  Fix:", bold=True)
+                        + f" Set rollout.max_tokens to {recommended:,} or less"
+                    )
+                    click.echo()
+                    click.echo(click.style("  In config.yml:", dim=True))
+                    click.echo(click.style("    rollout:", dim=True))
+                    click.echo(f"      max_tokens: {click.style(str(recommended), fg=TEAL_RGB)}")
+                    click.echo()
+                    raise click.ClickException("max_tokens + prompt length exceeds context window")
 
     # Validate requirements.txt if present (check format and Python 3.11 compatibility)
     requirements_path = dir / "requirements.txt"

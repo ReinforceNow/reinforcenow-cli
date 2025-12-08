@@ -537,6 +537,33 @@ async def _test_async(
     if not train_path.exists():
         raise click.ClickException("train.jsonl not found in project directory")
 
+    # Validate max_tokens vs prompt size
+    from rnow.cli.commands import get_max_prompt_tokens, validate_max_tokens_for_context
+    from rnow.models import MAX_CONTEXT_WINDOW
+
+    if config.rollout:
+        max_prompt_tokens = get_max_prompt_tokens(train_path)
+        if max_prompt_tokens > 0:
+            context_error, recommended = validate_max_tokens_for_context(
+                config.rollout.max_tokens, max_prompt_tokens
+            )
+            if context_error:
+                click.echo()
+                click.echo(click.style("✗ Context window exceeded", fg="red", bold=True))
+                click.echo()
+                click.echo(
+                    f"  Your longest prompt in train.jsonl is ~{max_prompt_tokens:,} tokens."
+                )
+                click.echo(f"  With max_tokens={config.rollout.max_tokens:,}, the total exceeds")
+                click.echo(f"  the {MAX_CONTEXT_WINDOW:,} token context window.")
+                click.echo()
+                click.echo(
+                    click.style("  Fix:", bold=True)
+                    + f" Set rollout.max_tokens to {recommended:,} or less"
+                )
+                click.echo()
+                raise click.ClickException("max_tokens + prompt length exceeds context window")
+
     clear_reward_registry()
     clear_tool_registry()
 

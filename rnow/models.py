@@ -121,6 +121,12 @@ SUPPORTED_MODELS = Literal[
     "meta-llama/Llama-3.2-1B",
 ]
 
+# Maximum context window for all supported models
+MAX_CONTEXT_WINDOW = 32768
+
+# Conservative max_tokens limit (leaves room for prompts)
+MAX_GENERATION_TOKENS = 30000
+
 
 class DataConfig(BaseModel):
     """Data configuration for training."""

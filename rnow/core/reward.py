@@ -192,6 +192,7 @@ def validate_rewards_file(filepath) -> list:
     Parses the AST to find @reward decorated functions and checks:
     - Function is async
     - Has correct number of parameters
+    - Return values are between 0.0 and 1.0
 
     Returns a list of error messages (empty if valid).
     """
@@ -206,6 +207,43 @@ def validate_rewards_file(filepath) -> list:
         tree = ast.parse(source, filename=str(filepath))
     except SyntaxError as e:
         return [f"Syntax error in {filepath.name}: {e}"]
+
+    def get_numeric_value(node) -> float | None:
+        """Extract numeric value from AST node if it's a constant."""
+        # Python 3.8+: ast.Constant
+        if isinstance(node, ast.Constant) and isinstance(node.value, int | float):
+            return float(node.value)
+        # Python 3.7: ast.Num
+        if hasattr(ast, "Num") and isinstance(node, ast.Num):
+            return float(node.n)
+        # Handle negative numbers: ast.UnaryOp with ast.USub
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
+            inner = get_numeric_value(node.operand)
+            if inner is not None:
+                return -inner
+        return None
+
+    def check_return_values(func_node, func_name: str):
+        """Check all return statements in a function for valid reward values."""
+        for child in ast.walk(func_node):
+            if isinstance(child, ast.Return) and child.value is not None:
+                # Check direct numeric returns
+                value = get_numeric_value(child.value)
+                if value is not None and (value < 0.0 or value > 1.0):
+                    errors.append(
+                        f"Reward '{func_name}' returns {value}, must be between 0.0 and 1.0 "
+                        f"(line {child.lineno})"
+                    )
+
+                # Check ternary expressions: x if cond else y
+                if isinstance(child.value, ast.IfExp):
+                    for branch in [child.value.body, child.value.orelse]:
+                        value = get_numeric_value(branch)
+                        if value is not None and (value < 0.0 or value > 1.0):
+                            errors.append(
+                                f"Reward '{func_name}' returns {value}, must be between 0.0 and 1.0 "
+                                f"(line {child.lineno})"
+                            )
 
     for node in ast.walk(tree):
         if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
@@ -251,6 +289,9 @@ def validate_rewards_file(filepath) -> list:
                         errors.append(
                             f"Reward '{node.name}': parameter '{arg.arg}' must have type hint '{param_hint}'."
                         )
+
+                # Check return values are between 0.0 and 1.0
+                check_return_values(node, node.name)
 
     return errors
 
