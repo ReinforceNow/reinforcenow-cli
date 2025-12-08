@@ -221,6 +221,7 @@ class ProjectConfig(BaseModel):
     project_id: str = Field(default="")
     project_name: str = Field(default="")
     dataset_id: str = Field(default="")
+    dataset_name: str | None = None
     dataset_type: DatasetType = Field(...)
     organization_id: str | None = None
 

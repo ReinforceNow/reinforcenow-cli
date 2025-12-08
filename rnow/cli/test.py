@@ -2,7 +2,6 @@
 """
 Test command for running RL rollouts locally.
 
-Uses Tinker API via Next.js for all sampling.
 Requires authentication for billing.
 """
 
@@ -82,9 +81,9 @@ from rnow.models import ProjectConfig, RewardArgs
 DEFAULT_API_URL = "https://www.reinforcenow.ai"
 
 
-class TinkerCompleter:
+class ModelCompleter:
     """
-    Completer that uses tinker-cookbook for tokenization and calls Next.js API.
+    Completer that handles tokenization and calls Next.js API.
     Requires authentication for billing.
     """
 
@@ -99,7 +98,7 @@ class TinkerCompleter:
         self.total_latency_ms = 0
         self.request_count = 0
 
-        # Initialize tokenizer and renderer from tinker-cookbook
+        # Initialize tokenizer and renderer
         from tinker_cookbook import renderers
         from tinker_cookbook.model_info import get_recommended_renderer_name
         from tinker_cookbook.tokenizer_utils import get_tokenizer
@@ -248,7 +247,7 @@ def _format_message(msg: dict, max_len: int = 300) -> str:
 
 
 async def _run_single_rollout(
-    completer: TinkerCompleter,
+    completer: ModelCompleter,
     sample: dict,
     reward_registry: dict[str, Callable],
     tool_registry: dict[str, Callable],
@@ -387,11 +386,15 @@ def _check_test_dependencies():
     try:
         import tinker_cookbook  # noqa: F401
     except ImportError:
-        raise click.ClickException(
-            "The 'rnow test' command requires additional dependencies.\n"
-            "Install them with: pip install 'rnow[test]'\n\n"
-            "This installs tinker-cookbook which is needed for tokenization and rendering."
+        click.echo()
+        click.echo(
+            click.style("Error: ", fg="red", bold=True)
+            + "The 'rnow test' command requires additional dependencies."
         )
+        pip_cmd = "pip install 'rnow[test]'"
+        click.echo(f"Install them with: {click.style(pip_cmd, fg=TEAL_RGB)}")
+        click.echo()
+        raise SystemExit(1)
 
 
 @click.command(name="test")
@@ -448,11 +451,10 @@ def _check_test_dependencies():
 )
 @click.pass_context
 def test(ctx, project_dir, num_rollouts, multi_turn, with_tools, model, api_url, verbose, truncate):
-    """Test RL rollouts using Next.js + Tinker for sampling.
+    """Test RL rollouts locally before submitting.
 
-    This command runs local RL rollouts by calling the Next.js API,
-    which proxies requests to the Tinker API. Uses tinker-cookbook
-    for tokenization and rendering.
+    This command runs local RL rollouts by calling the Next.js API
+    for model sampling.
 
     Only works with RL projects (dataset_type: rl).
     """
@@ -566,7 +568,7 @@ async def _test_async(
     try:
         # Create one completer per concurrent rollout to avoid session conflicts
         completers = [
-            TinkerCompleter(
+            ModelCompleter(
                 api_base=api_url,
                 model=model_name,
                 max_tokens=max_tokens,

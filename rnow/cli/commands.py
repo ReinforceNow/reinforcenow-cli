@@ -594,64 +594,92 @@ def logout():
 
 
 @click.command()
-def status():
-    """Check authentication status."""
-    if auth.is_authenticated():
-        click.echo(click.style("✓ Authenticated", fg="green"))
-        org_id = get_active_organization()
-        if org_id:
-            click.echo(f"Organization: {org_id}")
-    else:
+@click.pass_context
+def status(ctx):
+    """Check authentication status and running jobs."""
+    if not auth.is_authenticated():
         click.echo(click.style("✗ Not authenticated", fg="red"))
-        raise click.ClickException("Run 'reinforcenow login' to authenticate")
+        raise click.ClickException("Run 'rnow login' to authenticate")
+
+    click.echo(click.style("✓ Authenticated", fg=TEAL_RGB))
+    org_id = get_active_organization()
+    if org_id:
+        click.echo(f"Organization: {org_id}")
+
+    base_url = ctx.obj.get("api_url", "https://www.reinforcenow.ai/api")
+    click.echo()
+    click.echo(click.style("Running jobs:", bold=True))
+    try:
+        response = api_request("get", "/runs?status=running", base_url)
+        response.raise_for_status()
+        data = response.json()
+        running_runs = data.get("data", [])
+        if running_runs:
+            for run in running_runs:
+                run_id = run.get("id", "unknown")
+                project = run.get("project", {})
+                project_name = project.get("name", "Unknown project")
+                phase = run.get("phase", "running")
+                click.echo(f"  • {click.style(run_id, fg=TEAL_RGB)} - {project_name} ({phase})")
+        else:
+            click.echo("  No running jobs")
+    except requests.RequestException as e:
+        click.echo(click.style(f"  Error fetching runs: {e}", fg="red"))
 
 
 # ========== Org Commands ==========
 
 
-@click.group()
-def orgs():
-    """Manage organizations."""
-    pass
-
-
-@orgs.command("list")
+@click.command()
+@click.argument("org_id", required=False)
 @click.pass_context
-def orgs_list(ctx):
-    """List all available organizations."""
+def orgs(ctx, org_id: str | None):
+    """List organizations or select one.
+
+    Without arguments, lists all organizations.
+    With ORG_ID, sets that organization as active.
+    """
+    require_auth()
     base_url = ctx.obj.get("api_url", "https://www.reinforcenow.ai/api")
 
+    # If org_id provided, select it
+    if org_id:
+        auth.set_active_organization(org_id)
+        click.echo(click.style(f"✓ Active organization set to: {org_id}", fg=TEAL_RGB))
+        return
+
+    # Otherwise list orgs
     try:
         response = api_request("get", "/auth/organizations", base_url)
         response.raise_for_status()
-        orgs = models.Organizations(**response.json())
+        orgs_data = models.Organizations(**response.json())
     except ValidationError as e:
         raise click.ClickException(f"Invalid organization data: {e}")
     except requests.RequestException as e:
         raise click.ClickException(f"Failed to fetch organizations: {e}")
 
-    if not orgs.organizations:
+    if not orgs_data.organizations:
         click.echo(click.style("No organizations found", fg="yellow"))
         return
 
+    click.echo()
     click.echo(click.style("Organizations:", bold=True))
-    for org in orgs.organizations:
-        if org.id == orgs.active_organization_id:
-            mark = click.style("✓", fg="green")
-            name = click.style(org.name, bold=True)
+    for org in orgs_data.organizations:
+        if org.id == orgs_data.active_organization_id:
+            # Active org in teal
+            name = click.style(f"  ✓ {org.name}", fg=TEAL_RGB, bold=True)
+            details = click.style(f" ({org.role.value})", dim=True)
+            click.echo(f"{name}{details}")
         else:
-            mark = " "
-            name = org.name
-        click.echo(f"  [{mark}] {name} ({org.id}) - {org.role.value}")
-
-
-@orgs.command("select")
-@click.argument("org_id", required=True)
-def orgs_select(org_id: str):
-    """Set active organization by ID."""
-    require_auth()
-    auth.set_active_organization(org_id)
-    click.echo(click.style(f"✓ Active organization set to: {org_id}", fg="green"))
+            name = f"    {org.name}"
+            details = click.style(f" ({org.role.value})", dim=True)
+            click.echo(f"{name}{details}")
+    click.echo()
+    click.echo(
+        click.style("Use ", dim=True)
+        + click.style("rnow orgs <ORG_ID>", fg=TEAL_RGB)
+        + click.style(" to switch", dim=True)
+    )
 
 
 # ========== Project Commands ==========
@@ -687,34 +715,22 @@ def init(template: str, name: str):
     import shutil
     from pathlib import Path
 
-    # Next.js style prompts: bold question › dim default
-    if name:
-        project_name = name
-    else:
-        default_name = "rlvr-project"
-        prompt_text = (
-            click.style("What is your project named?", bold=True)
-            + click.style(" › ", dim=True)
-            + click.style(default_name, dim=True)
+    from prompt_toolkit import prompt as pt_prompt
+    from prompt_toolkit.formatted_text import HTML
+
+    def styled_prompt(question: str, default: str) -> str:
+        """Next.js style prompt with placeholder that disappears on typing."""
+        result = pt_prompt(
+            HTML(f"<b>{question}</b> <gray>›</gray> "),
+            placeholder=HTML(f"<gray>{default}</gray>"),
         )
-        project_name = click.prompt(
-            prompt_text, default=default_name, show_default=False, prompt_suffix=""
-        )
-        if not project_name:
-            project_name = default_name
+        return result.strip() or default
+
+    # Project name prompt
+    project_name = name if name else styled_prompt("What is your project named?", "rlvr-project")
 
     # Dataset name prompt
-    default_dataset = "train"
-    dataset_prompt = (
-        click.style("What is your dataset named?", bold=True)
-        + click.style(" › ", dim=True)
-        + click.style(default_dataset, dim=True)
-    )
-    dataset_name = click.prompt(
-        dataset_prompt, default=default_dataset, show_default=False, prompt_suffix=""
-    )
-    if not dataset_name:
-        dataset_name = default_dataset
+    dataset_name = styled_prompt("What is your dataset named?", "train")
 
     # Create project directory in current location
     project_dir = Path(".")
@@ -758,7 +774,10 @@ def init(template: str, name: str):
                     + click.style(f" {', '.join(all_affected)}", dim=True)
                 )
                 confirm_prompt = (
-                    click.style("Continue?", bold=True) + click.style(" {yes}", dim=True) + "/no"
+                    click.style("Continue?", bold=True)
+                    + " ("
+                    + click.style("yes", dim=True)
+                    + "/no)"
                 )
                 if not click.confirm(
                     confirm_prompt, default=True, show_default=False, prompt_suffix=" "
@@ -822,12 +841,14 @@ def init(template: str, name: str):
             )
         pass  # Config created silently
 
-    click.echo(click.style(f"\n✓ Created project: {project_name}", fg="green"))
+    click.echo(click.style(f"\n✓ Created local project: {project_name}", fg=TEAL_RGB))
     click.echo()
     click.echo(click.style("Next steps:", bold=True))
     click.echo(f"  1. Edit {click.style('train.jsonl', underline=True)} with your training data")
-    click.echo(f"  2. Edit {click.style('rewards.py', underline=True)} with your reward functions")
-    click.echo(f"  3. Run {click.style('rnow run', bold=True)} to start training")
+    click.echo(
+        f"  2. Edit {click.style('rewards.py', underline=True)} and {click.style('env.py', underline=True)} with your reward and tool functions"
+    )
+    click.echo(f"  3. Run {click.style('rnow run', fg=TEAL_RGB, bold=True)} to start training")
 
 
 def parse_override(override: str) -> tuple[list[str], any]:

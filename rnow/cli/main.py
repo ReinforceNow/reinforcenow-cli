@@ -14,12 +14,15 @@ except Exception:
 
 
 @click.group(context_settings={"help_option_names": ["-h", "--help"]})
-@click.option("--api-url", default="https://www.reinforcenow.ai/api", help="API base URL")
+@click.option("--api-url", default="https://www.reinforcenow.ai/api", hidden=True)
 @click.option("--debug", is_flag=True, hidden=True)
 @click.version_option(version=__version__, prog_name="rnow")
 @click.pass_context
 def cli(ctx, api_url, debug):
-    """Train language models with reinforcement learning."""
+    """
+    \b
+    \033[1m\033[38;2;20;184;166mTrain language models with reinforcement learning.\033[0m
+    """
     ctx.ensure_object(dict)
     ctx.obj["api_url"] = api_url
     ctx.obj["debug"] = debug
