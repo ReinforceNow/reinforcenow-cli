@@ -815,13 +815,7 @@ def orgs(ctx, org_id: str | None):
     require_auth()
     base_url = ctx.obj.get("api_url", "https://www.reinforcenow.ai/api")
 
-    # If org_id provided, select it directly
-    if org_id:
-        auth.set_active_organization(org_id)
-        click.echo(click.style(f"✓ Active organization set to: {org_id}", fg=TEAL_RGB))
-        return
-
-    # Fetch organizations
+    # Fetch organizations first (needed for both direct ID and interactive)
     try:
         response = api_request("get", "/auth/organizations", base_url)
         response.raise_for_status()
@@ -830,6 +824,22 @@ def orgs(ctx, org_id: str | None):
         raise click.ClickException(f"Invalid organization data: {e}")
     except requests.RequestException as e:
         raise click.ClickException(f"Failed to fetch organizations: {e}")
+
+    # If org_id provided, validate and select it directly
+    if org_id:
+        # Check if org_id exists in user's organizations
+        valid_org = next((org for org in orgs_data.organizations if org.id == org_id), None)
+        if not valid_org:
+            click.echo(click.style(f"✗ Organization not found: {org_id}", fg="red"))
+            click.echo()
+            click.echo("Available organizations:")
+            for org in orgs_data.organizations:
+                click.echo(f"  • {org.id} ({org.name})")
+            raise click.ClickException("Invalid organization ID")
+
+        auth.set_active_organization(org_id)
+        click.echo(click.style(f"✓ Active organization set to: {valid_org.name}", fg=TEAL_RGB))
+        return
 
     if not orgs_data.organizations:
         click.echo(click.style("No organizations found", fg="yellow"))
