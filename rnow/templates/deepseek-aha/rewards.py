@@ -13,9 +13,10 @@ async def format(args: RewardArgs, messages: list) -> float:
 
 @reward
 async def accuracy(args: RewardArgs, messages: list) -> float:
-    """Check if equation equals target."""
+    """Check if equation equals target and uses all numbers exactly once."""
     response = messages[-1]["content"]
     target = args.metadata["target"]
+    numbers = args.metadata["numbers"]
 
     # Extract equation from <answer> tags
     match = re.search(r"<answer>\s*(.*?)\s*</answer>", response, re.DOTALL)
@@ -23,6 +24,11 @@ async def accuracy(args: RewardArgs, messages: list) -> float:
         return 0.0
 
     equation = match.group(1).strip()
+
+    # Check all numbers used exactly once.
+    used = [int(n) for n in re.findall(r"\d+", equation)]
+    if sorted(used) != sorted(numbers):
+        return 0.0
 
     try:
         result = eval(equation)

@@ -267,6 +267,174 @@ def validate_max_tokens_for_context(
     return None, available
 
 
+def get_tool_tokens_from_env_py(env_path: Path) -> int:
+    """
+    Estimate token count from tool definitions in env.py.
+    Parses AST to extract docstrings and parameter info without executing.
+    """
+    import ast
+
+    if not env_path.exists():
+        return 0
+
+    try:
+        source = env_path.read_text()
+        tree = ast.parse(source)
+    except (SyntaxError, OSError):
+        return 0
+
+    total_chars = 0
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            # Check if function has @tool decorator
+            is_tool = any(
+                (isinstance(d, ast.Name) and d.id == "tool")
+                or (
+                    isinstance(d, ast.Call) and isinstance(d.func, ast.Name) and d.func.id == "tool"
+                )
+                for d in node.decorator_list
+            )
+            if not is_tool:
+                continue
+
+            # Add function name
+            total_chars += len(node.name) + 50  # overhead for tool definition structure
+
+            # Add docstring
+            doc = ast.get_docstring(node) or ""
+            total_chars += len(doc)
+
+            # Add parameters (name + type annotation approximation)
+            for arg in node.args.args + node.args.kwonlyargs:
+                if arg.arg not in ("self", "cls"):
+                    total_chars += len(arg.arg) + 30  # param name + type overhead
+
+    return estimate_tokens_from_chars(total_chars)
+
+
+def fetch_mcp_tool_schemas(
+    mcp_urls: list[str] | str | None, timeout: float = 15.0
+) -> tuple[int, list[dict], str | None]:
+    """
+    Fetch actual tool schemas from MCP servers and calculate token count.
+
+    Args:
+        mcp_urls: MCP server URL(s)
+        timeout: Connection timeout in seconds
+
+    Returns:
+        Tuple of (total_tokens, list of tool info dicts, error_message or None)
+        Returns (heuristic_tokens, [], error_message) if fetch fails.
+    """
+    if not mcp_urls:
+        return 0, [], None
+
+    urls = mcp_urls if isinstance(mcp_urls, list) else [mcp_urls]
+    all_tools = []
+    total_chars = 0
+    error_msg = None
+
+    try:
+        from fastmcp import Client
+    except ImportError:
+        return _estimate_mcp_tokens_heuristic(urls), [], "fastmcp not installed"
+
+    import asyncio
+
+    async def fetch_tools():
+        nonlocal total_chars, all_tools, error_msg
+
+        # Build FastMCP config
+        fastmcp_config = {"mcpServers": {}}
+        for i, url in enumerate(urls):
+            server_name = f"mcp_{i}"
+            fastmcp_config["mcpServers"][server_name] = {"url": url}
+
+        try:
+            client = Client(fastmcp_config)
+            async with client:
+                tools = await client.list_tools()
+
+                for tool in tools:
+                    name = tool.name
+                    description = getattr(tool, "description", "") or ""
+
+                    # Get input schema
+                    input_schema = {}
+                    if hasattr(tool, "inputSchema"):
+                        input_schema = tool.inputSchema
+                    elif hasattr(tool, "input_schema"):
+                        input_schema = tool.input_schema
+
+                    # Calculate characters for this tool
+                    # Tool name + description + JSON schema
+                    tool_chars = len(name) + len(description)
+                    schema_str = json.dumps(input_schema) if input_schema else ""
+                    tool_chars += len(schema_str)
+                    # Add overhead for tool definition structure
+                    tool_chars += 100
+
+                    total_chars += tool_chars
+                    all_tools.append(
+                        {
+                            "name": name,
+                            "description": description,
+                            "schema": input_schema,
+                            "chars": tool_chars,
+                        }
+                    )
+
+        except Exception as e:
+            error_msg = str(e)
+            return False
+        return True
+
+    # Run async fetch with timeout
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            success = loop.run_until_complete(asyncio.wait_for(fetch_tools(), timeout=timeout))
+        finally:
+            loop.close()
+
+        if not success:
+            return _estimate_mcp_tokens_heuristic(urls), [], error_msg or "connection failed"
+
+    except asyncio.TimeoutError:
+        return _estimate_mcp_tokens_heuristic(urls), [], f"timeout after {timeout}s"
+    except Exception as e:
+        return _estimate_mcp_tokens_heuristic(urls), [], str(e)
+
+    # Convert chars to tokens (2 chars = 1 token)
+    total_tokens = estimate_tokens_from_chars(total_chars)
+    return total_tokens, all_tools, None
+
+
+def _estimate_mcp_tokens_heuristic(urls: list[str]) -> int:
+    """Fallback heuristic estimates when MCP fetch fails."""
+    total_tokens = 0
+    for url in urls:
+        if "tavily" in url.lower():
+            total_tokens += 30000
+        elif "exa" in url.lower():
+            total_tokens += 20000
+        elif "browserbase" in url.lower() or "browser" in url.lower():
+            total_tokens += 15000
+        else:
+            total_tokens += 10000
+    return total_tokens
+
+
+def get_tool_tokens_from_mcp(mcp_urls: list[str] | str | None) -> int:
+    """
+    Get token count from MCP tool definitions by fetching actual schemas.
+    Returns 0 if MCP is not configured.
+    """
+    tokens, _, _ = fetch_mcp_tool_schemas(mcp_urls)
+    return tokens
+
+
 def validate_train_jsonl(
     path: Path, dataset_type: models.DatasetType, sample_size: int = 50
 ) -> list[str]:
@@ -1608,12 +1776,75 @@ def run(
                 click.echo(f"  • {err}")
             raise click.ClickException("Please fix train.jsonl format before submitting")
 
-        # Validate max_tokens vs prompt size for RL
+        # Validate max_tokens vs prompt size for RL (including tool definitions)
         if config.dataset_type == models.DatasetType.RL and config.rollout:
             max_prompt_tokens = get_max_prompt_tokens(train_jsonl_path)
-            if max_prompt_tokens > 0:
+
+            # Add tool tokens from env.py and MCP servers
+            env_path = dir / "env.py"
+            env_tool_tokens = get_tool_tokens_from_env_py(env_path)
+
+            # Fetch MCP tool schemas (with progress indicator)
+            mcp_urls = config.rollout.mcp_url if config.rollout else None
+            mcp_tool_tokens = 0
+            mcp_tool_count = 0
+            if mcp_urls:
+                # Check if fastmcp is installed in the same environment as rnow
+                try:
+                    import fastmcp  # noqa: F401
+                except ImportError:
+                    click.echo()
+                    click.echo(click.style("✗ MCP support requires fastmcp", fg="red", bold=True))
+                    click.echo()
+                    click.echo("  Your config.yml uses mcp_url, but fastmcp is not installed")
+                    click.echo("  in the same Python environment as rnow.")
+                    click.echo()
+                    click.echo(f"  rnow is running from: {click.style(sys.executable, dim=True)}")
+                    click.echo()
+                    click.echo("  Install it with:")
+                    click.echo(
+                        click.style(f"    {sys.executable} -m pip install fastmcp", fg=TEAL_RGB)
+                    )
+                    click.echo()
+                    raise click.ClickException("Missing dependency: fastmcp")
+
+                click.echo(click.style("Fetching MCP tools...", dim=True), nl=False)
+                mcp_tool_tokens, mcp_tools, mcp_error = fetch_mcp_tool_schemas(
+                    mcp_urls, timeout=15.0
+                )
+                mcp_tool_count = len(mcp_tools)
+                if mcp_tool_count > 0:
+                    click.echo(
+                        "\r"
+                        + click.style("MCP: ", fg=TEAL_RGB)
+                        + f"{mcp_tool_count} tools, ~{mcp_tool_tokens:,} tokens"
+                        + " " * 20
+                    )
+                else:
+                    # Show why we fell back to estimate
+                    click.echo(
+                        "\r"
+                        + click.style("MCP: ", fg=TEAL_RGB)
+                        + f"~{mcp_tool_tokens:,} tokens (estimated - {mcp_error})"
+                        + " " * 10
+                    )
+
+            tool_tokens = env_tool_tokens + mcp_tool_tokens
+
+            total_prompt_tokens = max_prompt_tokens + tool_tokens
+
+            # Show context window usage
+            if total_prompt_tokens > 0:
+                click.echo(
+                    click.style("Context: ", fg=TEAL_RGB)
+                    + f"~{max_prompt_tokens:,} prompt"
+                    + (f" + ~{tool_tokens:,} tools" if tool_tokens > 0 else "")
+                    + f" + {config.rollout.max_tokens:,} max_tokens"
+                    + f" = ~{total_prompt_tokens + config.rollout.max_tokens:,}"
+                    + f" / {models.MAX_CONTEXT_WINDOW:,}"
+                )
                 context_error, recommended = validate_max_tokens_for_context(
-                    config.rollout.max_tokens, max_prompt_tokens
+                    config.rollout.max_tokens, total_prompt_tokens
                 )
                 if context_error:
                     click.echo()
@@ -1622,6 +1853,9 @@ def run(
                     click.echo(
                         f"  Your longest prompt in train.jsonl is ~{max_prompt_tokens:,} tokens."
                     )
+                    if tool_tokens > 0:
+                        click.echo(f"  Tool definitions add ~{tool_tokens:,} tokens.")
+                        click.echo(f"  Total prompt context: ~{total_prompt_tokens:,} tokens.")
                     click.echo(
                         f"  With max_tokens={config.rollout.max_tokens:,}, the total exceeds"
                     )
