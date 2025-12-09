@@ -206,9 +206,79 @@ def estimate_tokens_from_chars(char_count: int) -> int:
     return char_count // 2
 
 
-def get_max_prompt_tokens(path: Path, sample_size: int = 100) -> int:
+# Tokenizer cache to avoid reloading
+_tokenizer_cache: dict[str, any] = {}
+
+
+def get_tokenizer_for_model(model_path: str):
     """
-    Scan train.jsonl and return the maximum estimated prompt token count.
+    Get the appropriate tokenizer for a model.
+    Uses HuggingFace tokenizers library for Qwen/Llama/DeepSeek,
+    and openai-harmony for gpt-oss models.
+
+    Returns None if tokenizer cannot be loaded.
+    """
+    if model_path in _tokenizer_cache:
+        return _tokenizer_cache[model_path]
+
+    tokenizer = None
+
+    # gpt-oss models use openai-harmony
+    if "gpt-oss" in model_path.lower():
+        try:
+            from openai_harmony import HarmonyEncodingName, load_harmony_encoding
+
+            tokenizer = load_harmony_encoding(HarmonyEncodingName.HARMONY_GPT_OSS)
+            _tokenizer_cache[model_path] = ("harmony", tokenizer)
+            return _tokenizer_cache[model_path]
+        except ImportError:
+            pass
+    else:
+        # All other models use HuggingFace tokenizers
+        try:
+            from tokenizers import Tokenizer
+
+            tokenizer = Tokenizer.from_pretrained(model_path)
+            _tokenizer_cache[model_path] = ("hf", tokenizer)
+            return _tokenizer_cache[model_path]
+        except Exception:
+            pass
+
+    _tokenizer_cache[model_path] = None
+    return None
+
+
+def count_tokens(text: str, model_path: str) -> int:
+    """
+    Count tokens in text using the appropriate tokenizer for the model.
+    Falls back to conservative char-based estimate if tokenizer unavailable.
+    """
+    tokenizer_info = get_tokenizer_for_model(model_path)
+
+    if tokenizer_info is None:
+        # Fallback: conservative estimate (1 char ≈ 1 token for safety)
+        return len(text)
+
+    tokenizer_type, tokenizer = tokenizer_info
+
+    try:
+        if tokenizer_type == "harmony":
+            # openai-harmony: encode returns token IDs directly
+            tokens = tokenizer.encode(text)
+            return len(tokens)
+        else:
+            # HuggingFace tokenizers
+            encoded = tokenizer.encode(text)
+            return len(encoded.ids)
+    except Exception:
+        # Fallback on any error
+        return len(text)
+
+
+def get_max_prompt_tokens(path: Path, model_path: str = "", sample_size: int = 100) -> int:
+    """
+    Scan train.jsonl and return the maximum prompt token count.
+    Uses actual tokenizer if available, otherwise falls back to char estimate.
     """
     max_tokens = 0
 
@@ -230,19 +300,29 @@ def get_max_prompt_tokens(path: Path, sample_size: int = 100) -> int:
                 if not isinstance(record, dict) or "messages" not in record:
                     continue
 
-                # Calculate total characters in all messages
+                # Build full prompt text from messages
                 messages = record.get("messages", [])
-                total_chars = 0
+                prompt_parts = []
                 for msg in messages:
                     if isinstance(msg, dict):
+                        role = msg.get("role", "")
                         content = msg.get("content", "")
                         if isinstance(content, str):
-                            total_chars += len(content)
-                        # Add overhead for role, formatting (~20 tokens per message)
-                        total_chars += 60
+                            prompt_parts.append(f"{role}: {content}")
 
-                estimated_tokens = estimate_tokens_from_chars(total_chars) + 50  # Add buffer
-                max_tokens = max(max_tokens, estimated_tokens)
+                full_prompt = "\n".join(prompt_parts)
+
+                # Count tokens using actual tokenizer or fallback
+                if model_path:
+                    token_count = count_tokens(full_prompt, model_path)
+                    # Add overhead for message formatting (~10 tokens per message)
+                    token_count += len(messages) * 10
+                else:
+                    # Fallback to char estimate
+                    total_chars = len(full_prompt) + len(messages) * 60
+                    token_count = estimate_tokens_from_chars(total_chars) + 50
+
+                max_tokens = max(max_tokens, token_count)
 
     except Exception:
         pass
@@ -267,10 +347,10 @@ def validate_max_tokens_for_context(
     return None, available
 
 
-def get_tool_tokens_from_env_py(env_path: Path) -> int:
+def get_tool_tokens_from_env_py(env_path: Path, model_path: str = "") -> int:
     """
-    Estimate token count from tool definitions in env.py.
-    Parses AST to extract docstrings and parameter info without executing.
+    Count tokens from tool definitions in env.py.
+    Parses AST to extract tool definitions and counts tokens using actual tokenizer.
     """
     import ast
 
@@ -283,7 +363,8 @@ def get_tool_tokens_from_env_py(env_path: Path) -> int:
     except (SyntaxError, OSError):
         return 0
 
-    total_chars = 0
+    # Build a string representation of all tool definitions
+    tool_definitions = []
     for node in ast.walk(tree):
         if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
             # Check if function has @tool decorator
@@ -297,29 +378,43 @@ def get_tool_tokens_from_env_py(env_path: Path) -> int:
             if not is_tool:
                 continue
 
-            # Add function name
-            total_chars += len(node.name) + 50  # overhead for tool definition structure
-
-            # Add docstring
+            # Build tool definition string similar to how it appears in prompt
+            tool_def = f"function: {node.name}\n"
             doc = ast.get_docstring(node) or ""
-            total_chars += len(doc)
+            if doc:
+                tool_def += f"description: {doc}\n"
 
-            # Add parameters (name + type annotation approximation)
+            # Add parameters
+            params = []
             for arg in node.args.args + node.args.kwonlyargs:
                 if arg.arg not in ("self", "cls"):
-                    total_chars += len(arg.arg) + 30  # param name + type overhead
+                    params.append(arg.arg)
+            if params:
+                tool_def += f"parameters: {', '.join(params)}\n"
 
-    return estimate_tokens_from_chars(total_chars)
+            tool_definitions.append(tool_def)
+
+    if not tool_definitions:
+        return 0
+
+    full_tools_text = "\n".join(tool_definitions)
+
+    # Use actual tokenizer if available
+    if model_path:
+        return count_tokens(full_tools_text, model_path)
+    else:
+        return estimate_tokens_from_chars(len(full_tools_text))
 
 
 def fetch_mcp_tool_schemas(
-    mcp_urls: list[str] | str | None, timeout: float = 15.0
+    mcp_urls: list[str] | str | None, model_path: str = "", timeout: float = 15.0
 ) -> tuple[int, list[dict], str | None]:
     """
     Fetch actual tool schemas from MCP servers and calculate token count.
 
     Args:
         mcp_urls: MCP server URL(s)
+        model_path: Model path for accurate tokenization
         timeout: Connection timeout in seconds
 
     Returns:
@@ -331,7 +426,7 @@ def fetch_mcp_tool_schemas(
 
     urls = mcp_urls if isinstance(mcp_urls, list) else [mcp_urls]
     all_tools = []
-    total_chars = 0
+    tools_text_parts = []
     error_msg = None
 
     try:
@@ -342,7 +437,7 @@ def fetch_mcp_tool_schemas(
     import asyncio
 
     async def fetch_tools():
-        nonlocal total_chars, all_tools, error_msg
+        nonlocal all_tools, tools_text_parts, error_msg
 
         # Build FastMCP config
         fastmcp_config = {"mcpServers": {}}
@@ -366,21 +461,19 @@ def fetch_mcp_tool_schemas(
                     elif hasattr(tool, "input_schema"):
                         input_schema = tool.input_schema
 
-                    # Calculate characters for this tool
-                    # Tool name + description + JSON schema
-                    tool_chars = len(name) + len(description)
+                    # Build tool text representation for tokenization
                     schema_str = json.dumps(input_schema) if input_schema else ""
-                    tool_chars += len(schema_str)
-                    # Add overhead for tool definition structure
-                    tool_chars += 100
+                    tool_text = (
+                        f"function: {name}\ndescription: {description}\nschema: {schema_str}\n"
+                    )
+                    tools_text_parts.append(tool_text)
 
-                    total_chars += tool_chars
                     all_tools.append(
                         {
                             "name": name,
                             "description": description,
                             "schema": input_schema,
-                            "chars": tool_chars,
+                            "text": tool_text,
                         }
                     )
 
@@ -406,8 +499,13 @@ def fetch_mcp_tool_schemas(
     except Exception as e:
         return _estimate_mcp_tokens_heuristic(urls), [], str(e)
 
-    # Convert chars to tokens (2 chars = 1 token)
-    total_tokens = estimate_tokens_from_chars(total_chars)
+    # Count tokens using actual tokenizer
+    full_tools_text = "\n".join(tools_text_parts)
+    if model_path:
+        total_tokens = count_tokens(full_tools_text, model_path)
+    else:
+        total_tokens = estimate_tokens_from_chars(len(full_tools_text))
+
     return total_tokens, all_tools, None
 
 
@@ -1778,11 +1876,30 @@ def run(
 
         # Validate max_tokens vs prompt size for RL (including tool definitions)
         if config.dataset_type == models.DatasetType.RL and config.rollout:
-            max_prompt_tokens = get_max_prompt_tokens(train_jsonl_path)
+            # Get model path for accurate tokenization
+            model_path = config.model.path if config.model else ""
+
+            # Try to load tokenizer (show message if loading)
+            if model_path:
+                click.echo(click.style("Loading tokenizer...", dim=True), nl=False)
+                tokenizer_info = get_tokenizer_for_model(model_path)
+                if tokenizer_info:
+                    click.echo(
+                        "\r" + click.style("Tokenizer: ", fg=TEAL_RGB) + f"{model_path}" + " " * 10
+                    )
+                else:
+                    click.echo(
+                        "\r"
+                        + click.style("Tokenizer: ", fg="yellow")
+                        + "not available, using estimates"
+                        + " " * 10
+                    )
+
+            max_prompt_tokens = get_max_prompt_tokens(train_jsonl_path, model_path)
 
             # Add tool tokens from env.py and MCP servers
             env_path = dir / "env.py"
-            env_tool_tokens = get_tool_tokens_from_env_py(env_path)
+            env_tool_tokens = get_tool_tokens_from_env_py(env_path, model_path)
 
             # Fetch MCP tool schemas (with progress indicator)
             mcp_urls = config.rollout.mcp_url if config.rollout else None
@@ -1810,7 +1927,7 @@ def run(
 
                 click.echo(click.style("Fetching MCP tools...", dim=True), nl=False)
                 mcp_tool_tokens, mcp_tools, mcp_error = fetch_mcp_tool_schemas(
-                    mcp_urls, timeout=15.0
+                    mcp_urls, model_path, timeout=15.0
                 )
                 mcp_tool_count = len(mcp_tools)
                 if mcp_tool_count > 0:
