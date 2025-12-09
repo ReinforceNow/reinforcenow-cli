@@ -31,8 +31,10 @@ dependencies = [
 test = ["tinker-cookbook>=0.1.0"]
 # API server mode
 api = ["fastapi>=0.68.0", "uvicorn>=0.15.0"]
+# MCP server support (for fetching tool schemas)
+mcp = ["fastmcp>=0.1.0"]
 # All optional features
-all = ["tinker-cookbook>=0.1.0", "fastapi>=0.68.0", "uvicorn>=0.15.0"]
+all = ["tinker-cookbook>=0.1.0", "fastapi>=0.68.0", "uvicorn>=0.15.0", "fastmcp>=0.1.0"]
 
 [project.scripts]
 rnow = "rnow.cli.main:main"

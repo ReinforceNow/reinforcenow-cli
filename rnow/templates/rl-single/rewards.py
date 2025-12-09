@@ -7,13 +7,16 @@ from rnow.core import RewardArgs, reward
 async def accuracy(args: RewardArgs, messages: list) -> float:
     """Check if the boxed answer matches the expected answer."""
     response = messages[-1]["content"]
-    expected = args.metadata["expected_answer"]
+    expected_raw = args.metadata["expected_answer"].strip()
 
-    # Extract content from \boxed{...}
-    match = re.search(r"\\boxed\{(.+?)\}", response, re.DOTALL)
-    if not match:
+    # Split expected answers like "A or B"
+    expected = {s.strip() for s in expected_raw.split(" or ")}
+
+    # Extract ALL boxed answers (handles \boxed and \\boxed)
+    answers = {s.strip() for s in re.findall(r"\\+boxed\{([^}]*)\}", response)}
+
+    if not answers:
         return 0.0
 
-    answer = match.group(1).strip()
-
-    return 1.0 if expected in answer or answer in expected else 0.0
+    # Success if ANY intersection between expected answers and boxed answers
+    return 1.0 if expected & answers else 0.0
