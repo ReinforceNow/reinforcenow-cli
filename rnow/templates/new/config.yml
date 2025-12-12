@@ -6,7 +6,7 @@ dataset_type: rl
 organization_id: ""
 data:
   train_file: train.jsonl
-  batch_size: 8
+  batch_size: 32
   group_size: 16
 model:
   path: Qwen/Qwen3-8B

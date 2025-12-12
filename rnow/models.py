@@ -231,6 +231,11 @@ class RolloutConfig(BaseModel):
         default=None,
         description="MCP server URL(s) for tools. Can be a single URL or a list of URLs. Can be used alongside env.py to combine both tool sources.",
     )
+    max_tool_response_chars: int | None = Field(
+        default=4000,
+        gt=0,
+        description="Maximum characters for tool responses. Longer responses are truncated. Set to null/None to disable truncation.",
+    )
 
 
 class TrainerConfig(BaseModel):

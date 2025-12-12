@@ -197,137 +197,11 @@ def validate_reward_references(train_jsonl_path: Path, rewards_py_path: Path) ->
     return errors
 
 
-def estimate_tokens_from_chars(char_count: int) -> int:
-    """
-    Estimate token count from character count.
-    Uses ~2 characters per token as a conservative (overestimating) approximation
-    to avoid runtime context window errors.
-    """
-    return char_count // 2
-
-
-# Tokenizer cache to avoid reloading
-_tokenizer_cache: dict[str, any] = {}
-
-
-def get_tokenizer_for_model(model_path: str):
-    """
-    Get the appropriate tokenizer for a model.
-    Uses HuggingFace tokenizers library for Qwen/Llama/DeepSeek,
-    and openai-harmony for gpt-oss models.
-
-    Returns None if tokenizer cannot be loaded.
-    """
-    if model_path in _tokenizer_cache:
-        return _tokenizer_cache[model_path]
-
-    tokenizer = None
-
-    # gpt-oss models use openai-harmony
-    if "gpt-oss" in model_path.lower():
-        try:
-            from openai_harmony import HarmonyEncodingName, load_harmony_encoding
-
-            tokenizer = load_harmony_encoding(HarmonyEncodingName.HARMONY_GPT_OSS)
-            _tokenizer_cache[model_path] = ("harmony", tokenizer)
-            return _tokenizer_cache[model_path]
-        except ImportError:
-            pass
-    else:
-        # All other models use HuggingFace tokenizers
-        try:
-            from tokenizers import Tokenizer
-
-            tokenizer = Tokenizer.from_pretrained(model_path)
-            _tokenizer_cache[model_path] = ("hf", tokenizer)
-            return _tokenizer_cache[model_path]
-        except Exception:
-            pass
-
-    _tokenizer_cache[model_path] = None
-    return None
-
-
-def count_tokens(text: str, model_path: str) -> int:
-    """
-    Count tokens in text using the appropriate tokenizer for the model.
-    Falls back to conservative char-based estimate if tokenizer unavailable.
-    """
-    tokenizer_info = get_tokenizer_for_model(model_path)
-
-    if tokenizer_info is None:
-        # Fallback: conservative estimate (1 char ≈ 1 token for safety)
-        return len(text)
-
-    tokenizer_type, tokenizer = tokenizer_info
-
-    try:
-        if tokenizer_type == "harmony":
-            # openai-harmony: encode returns token IDs directly
-            tokens = tokenizer.encode(text)
-            return len(tokens)
-        else:
-            # HuggingFace tokenizers
-            encoded = tokenizer.encode(text)
-            return len(encoded.ids)
-    except Exception:
-        # Fallback on any error
-        return len(text)
-
-
-def get_max_prompt_tokens(path: Path, model_path: str = "", sample_size: int = 100) -> int:
-    """
-    Scan train.jsonl and return the maximum prompt token count.
-    Uses actual tokenizer if available, otherwise falls back to char estimate.
-    """
-    max_tokens = 0
-
-    try:
-        with open(path, encoding="utf-8") as f:
-            for i, line in enumerate(f):
-                if i >= sample_size:
-                    break
-
-                stripped = line.strip()
-                if not stripped:
-                    continue
-
-                try:
-                    record = json.loads(stripped)
-                except json.JSONDecodeError:
-                    continue
-
-                if not isinstance(record, dict) or "messages" not in record:
-                    continue
-
-                # Build full prompt text from messages
-                messages = record.get("messages", [])
-                prompt_parts = []
-                for msg in messages:
-                    if isinstance(msg, dict):
-                        role = msg.get("role", "")
-                        content = msg.get("content", "")
-                        if isinstance(content, str):
-                            prompt_parts.append(f"{role}: {content}")
-
-                full_prompt = "\n".join(prompt_parts)
-
-                # Count tokens using actual tokenizer or fallback
-                if model_path:
-                    token_count = count_tokens(full_prompt, model_path)
-                    # Add overhead for message formatting (~10 tokens per message)
-                    token_count += len(messages) * 10
-                else:
-                    # Fallback to char estimate
-                    total_chars = len(full_prompt) + len(messages) * 60
-                    token_count = estimate_tokens_from_chars(total_chars) + 50
-
-                max_tokens = max(max_tokens, token_count)
-
-    except Exception:
-        pass
-
-    return max_tokens
+# Import token counting utilities from dedicated module
+from rnow.cli.token_count import (
+    get_max_prompt_tokens,
+    get_tokenizer_for_model,
+)
 
 
 def validate_max_tokens_for_context(
@@ -347,24 +221,23 @@ def validate_max_tokens_for_context(
     return None, available
 
 
-def get_tool_tokens_from_env_py(env_path: Path, model_path: str = "") -> int:
+def get_tools_from_env_py(env_path: Path) -> list[dict]:
     """
-    Count tokens from tool definitions in env.py.
-    Parses AST to extract tool definitions and counts tokens using actual tokenizer.
+    Extract tool definitions from env.py as structured data.
+    Returns list of tool dicts with name, description, and schema.
     """
     import ast
 
     if not env_path.exists():
-        return 0
+        return []
 
     try:
         source = env_path.read_text()
         tree = ast.parse(source)
     except (SyntaxError, OSError):
-        return 0
+        return []
 
-    # Build a string representation of all tool definitions
-    tool_definitions = []
+    tools = []
     for node in ast.walk(tree):
         if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
             # Check if function has @tool decorator
@@ -378,66 +251,76 @@ def get_tool_tokens_from_env_py(env_path: Path, model_path: str = "") -> int:
             if not is_tool:
                 continue
 
-            # Build tool definition string similar to how it appears in prompt
-            tool_def = f"function: {node.name}\n"
-            doc = ast.get_docstring(node) or ""
-            if doc:
-                tool_def += f"description: {doc}\n"
+            # Extract tool info
+            tool = {
+                "name": node.name,
+                "description": ast.get_docstring(node) or "",
+                "schema": {"type": "object", "properties": {}, "required": []},
+            }
 
-            # Add parameters
-            params = []
+            # Add parameters to schema
             for arg in node.args.args + node.args.kwonlyargs:
                 if arg.arg not in ("self", "cls"):
-                    params.append(arg.arg)
-            if params:
-                tool_def += f"parameters: {', '.join(params)}\n"
+                    # Try to get type annotation
+                    param_type = "string"  # Default
+                    if arg.annotation and isinstance(arg.annotation, ast.Name):
+                        type_name = arg.annotation.id.lower()
+                        if type_name in ("int", "integer"):
+                            param_type = "integer"
+                        elif type_name in ("float", "number"):
+                            param_type = "number"
+                        elif type_name in ("bool", "boolean"):
+                            param_type = "boolean"
+                        elif type_name in ("list", "array"):
+                            param_type = "array"
+                        elif type_name in ("dict", "object"):
+                            param_type = "object"
 
-            tool_definitions.append(tool_def)
+                    tool["schema"]["properties"][arg.arg] = {"type": param_type}
 
-    if not tool_definitions:
-        return 0
+                    # Check if it's a required arg (no default)
+                    if arg in node.args.args:
+                        idx = node.args.args.index(arg)
+                        num_defaults = len(node.args.defaults)
+                        num_args = len(node.args.args)
+                        if idx < num_args - num_defaults:
+                            tool["schema"]["required"].append(arg.arg)
 
-    full_tools_text = "\n".join(tool_definitions)
+            tools.append(tool)
 
-    # Use actual tokenizer if available
-    if model_path:
-        return count_tokens(full_tools_text, model_path)
-    else:
-        return estimate_tokens_from_chars(len(full_tools_text))
+    return tools
 
 
 def fetch_mcp_tool_schemas(
-    mcp_urls: list[str] | str | None, model_path: str = "", timeout: float = 15.0
-) -> tuple[int, list[dict], str | None]:
+    mcp_urls: list[str] | str | None, timeout: float = 15.0
+) -> tuple[list[dict], str | None]:
     """
-    Fetch actual tool schemas from MCP servers and calculate token count.
+    Fetch tool schemas from MCP servers.
 
     Args:
         mcp_urls: MCP server URL(s)
-        model_path: Model path for accurate tokenization
         timeout: Connection timeout in seconds
 
     Returns:
-        Tuple of (total_tokens, list of tool info dicts, error_message or None)
-        Returns (heuristic_tokens, [], error_message) if fetch fails.
+        Tuple of (list of tool dicts, error_message or None)
+        Returns ([], error_message) if fetch fails.
     """
     if not mcp_urls:
-        return 0, [], None
+        return [], None
 
     urls = mcp_urls if isinstance(mcp_urls, list) else [mcp_urls]
     all_tools = []
-    tools_text_parts = []
     error_msg = None
 
     try:
         from fastmcp import Client
     except ImportError:
-        return _estimate_mcp_tokens_heuristic(urls), [], "fastmcp not installed"
+        return [], "fastmcp not installed"
 
     import asyncio
 
     async def fetch_tools():
-        nonlocal all_tools, tools_text_parts, error_msg
+        nonlocal all_tools, error_msg
 
         # Build FastMCP config
         fastmcp_config = {"mcpServers": {}}
@@ -461,19 +344,11 @@ def fetch_mcp_tool_schemas(
                     elif hasattr(tool, "input_schema"):
                         input_schema = tool.input_schema
 
-                    # Build tool text representation for tokenization
-                    schema_str = json.dumps(input_schema) if input_schema else ""
-                    tool_text = (
-                        f"function: {name}\ndescription: {description}\nschema: {schema_str}\n"
-                    )
-                    tools_text_parts.append(tool_text)
-
                     all_tools.append(
                         {
                             "name": name,
                             "description": description,
                             "schema": input_schema,
-                            "text": tool_text,
                         }
                     )
 
@@ -492,45 +367,14 @@ def fetch_mcp_tool_schemas(
             loop.close()
 
         if not success:
-            return _estimate_mcp_tokens_heuristic(urls), [], error_msg or "connection failed"
+            return [], error_msg or "connection failed"
 
     except asyncio.TimeoutError:
-        return _estimate_mcp_tokens_heuristic(urls), [], f"timeout after {timeout}s"
+        return [], f"timeout after {timeout}s"
     except Exception as e:
-        return _estimate_mcp_tokens_heuristic(urls), [], str(e)
+        return [], str(e)
 
-    # Count tokens using actual tokenizer
-    full_tools_text = "\n".join(tools_text_parts)
-    if model_path:
-        total_tokens = count_tokens(full_tools_text, model_path)
-    else:
-        total_tokens = estimate_tokens_from_chars(len(full_tools_text))
-
-    return total_tokens, all_tools, None
-
-
-def _estimate_mcp_tokens_heuristic(urls: list[str]) -> int:
-    """Fallback heuristic estimates when MCP fetch fails."""
-    total_tokens = 0
-    for url in urls:
-        if "tavily" in url.lower():
-            total_tokens += 30000
-        elif "exa" in url.lower():
-            total_tokens += 20000
-        elif "browserbase" in url.lower() or "browser" in url.lower():
-            total_tokens += 15000
-        else:
-            total_tokens += 10000
-    return total_tokens
-
-
-def get_tool_tokens_from_mcp(mcp_urls: list[str] | str | None) -> int:
-    """
-    Get token count from MCP tool definitions by fetching actual schemas.
-    Returns 0 if MCP is not configured.
-    """
-    tokens, _, _ = fetch_mcp_tool_schemas(mcp_urls)
-    return tokens
+    return all_tools, None
 
 
 def validate_train_jsonl(
@@ -1212,17 +1056,34 @@ def init(template: str, name: str):
         )
         return result.strip() or default
 
+    # Map "start" to "rl-single"
+    actual_template = "rl-single" if template == "start" else template
+
+    # Default project names based on template
+    template_default_names = {
+        "rl-single": "rl-project",
+        "rl-tools": "rl-tools-project",
+        "rl-nextjs": "nextjs-project",
+        "mcp-tavily": "mcp-tavily-project",
+        "sft": "sft-project",
+        "tutorial-reward": "tutorial-reward",
+        "tutorial-tool": "tutorial-tool",
+        "deepseek-aha": "deepseek-aha",
+        "new": "new-project",
+        "blank": "my-project",
+    }
+    default_project_name = template_default_names.get(actual_template, "my-project")
+
     # Project name prompt
-    project_name = name if name else styled_prompt("What is your project named?", "rlvr-project")
+    project_name = (
+        name if name else styled_prompt("What is your project named?", default_project_name)
+    )
 
     # Dataset name prompt
     dataset_name = styled_prompt("What is your dataset named?", "train")
 
     # Create project directory in current location
     project_dir = Path(".")
-
-    # Map "start" to "rl-single"
-    actual_template = "rl-single" if template == "start" else template
 
     # Copy template files if template is specified (all except blank)
     if actual_template != "blank":
@@ -1506,6 +1367,49 @@ def _submit_single_run(
             ref_errors = validate_reward_references(train_jsonl_path, rewards_path)
             if ref_errors:
                 raise click.ClickException(f"Reward mismatch: {ref_errors[0]}")
+
+        # Validate context window (prompt + tools + max_tokens)
+        if config.rollout:
+            model_path = config.model.path if config.model else ""
+            model_name = model_path.split("/")[-1] if "/" in model_path else model_path
+
+            click.echo(f"  [{model_name}] Validating context window...")
+
+            # Collect all tools
+            all_tools = []
+
+            # Get tools from env.py
+            env_path = dir / "env.py"
+            env_tools = get_tools_from_env_py(env_path)
+            all_tools.extend(env_tools)
+
+            # Fetch MCP tools
+            mcp_urls = config.rollout.mcp_url
+            if mcp_urls:
+                mcp_tools, mcp_error = fetch_mcp_tool_schemas(mcp_urls, timeout=15.0)
+                if mcp_error:
+                    raise click.ClickException(
+                        f"Failed to fetch MCP tools for {model_name}: {mcp_error}"
+                    )
+                all_tools.extend(mcp_tools)
+                click.echo(f"  [{model_name}] MCP tools: {len(mcp_tools)} tools")
+
+            # Count tokens with proper format (includes Harmony rendering for gpt-oss)
+            total_prompt_tokens = get_max_prompt_tokens(train_jsonl_path, all_tools, model_path)
+
+            click.echo(
+                f"  [{model_name}] Total: {total_prompt_tokens:,} + {config.rollout.max_tokens:,} = {total_prompt_tokens + config.rollout.max_tokens:,} / {models.MAX_CONTEXT_WINDOW:,}"
+            )
+
+            context_error, recommended = validate_max_tokens_for_context(
+                config.rollout.max_tokens, total_prompt_tokens
+            )
+            if context_error:
+                raise click.ClickException(
+                    f"Context window exceeded for {model_name}: "
+                    f"~{total_prompt_tokens:,} prompt+tools + {config.rollout.max_tokens:,} max_tokens "
+                    f"> {models.MAX_CONTEXT_WINDOW:,}. Set max_tokens to {recommended:,} or less."
+                )
 
     # Check if train.jsonl needs blob upload
     train_path = dir / "train.jsonl"
@@ -1884,8 +1788,13 @@ def run(
                 click.echo(click.style("Loading tokenizer...", dim=True), nl=False)
                 tokenizer_info = get_tokenizer_for_model(model_path)
                 if tokenizer_info:
+                    tokenizer_type = tokenizer_info[0]
+                    label = "Harmony" if tokenizer_type == "harmony" else "HuggingFace"
                     click.echo(
-                        "\r" + click.style("Tokenizer: ", fg=TEAL_RGB) + f"{model_path}" + " " * 10
+                        "\r"
+                        + click.style("Tokenizer: ", fg=TEAL_RGB)
+                        + f"{label} ({model_path})"
+                        + " " * 10
                     )
                 else:
                     click.echo(
@@ -1895,18 +1804,18 @@ def run(
                         + " " * 10
                     )
 
-            max_prompt_tokens = get_max_prompt_tokens(train_jsonl_path, model_path)
+            # Collect all tools
+            all_tools = []
 
-            # Add tool tokens from env.py and MCP servers
+            # Get tools from env.py
             env_path = dir / "env.py"
-            env_tool_tokens = get_tool_tokens_from_env_py(env_path, model_path)
+            env_tools = get_tools_from_env_py(env_path)
+            all_tools.extend(env_tools)
 
             # Fetch MCP tool schemas (with progress indicator)
             mcp_urls = config.rollout.mcp_url if config.rollout else None
-            mcp_tool_tokens = 0
-            mcp_tool_count = 0
             if mcp_urls:
-                # Check if fastmcp is installed in the same environment as rnow
+                # Check if fastmcp is installed
                 try:
                     import fastmcp  # noqa: F401
                 except ImportError:
@@ -1926,36 +1835,28 @@ def run(
                     raise click.ClickException("Missing dependency: fastmcp")
 
                 click.echo(click.style("Fetching MCP tools...", dim=True), nl=False)
-                mcp_tool_tokens, mcp_tools, mcp_error = fetch_mcp_tool_schemas(
-                    mcp_urls, model_path, timeout=15.0
+                mcp_tools, mcp_error = fetch_mcp_tool_schemas(mcp_urls, timeout=15.0)
+                if mcp_error:
+                    click.echo(
+                        "\r" + click.style("MCP: ", fg="red") + f"failed ({mcp_error})" + " " * 20
+                    )
+                    raise click.ClickException(f"Failed to fetch MCP tools: {mcp_error}")
+
+                all_tools.extend(mcp_tools)
+                click.echo(
+                    "\r" + click.style("MCP: ", fg=TEAL_RGB) + f"{len(mcp_tools)} tools" + " " * 20
                 )
-                mcp_tool_count = len(mcp_tools)
-                if mcp_tool_count > 0:
-                    click.echo(
-                        "\r"
-                        + click.style("MCP: ", fg=TEAL_RGB)
-                        + f"{mcp_tool_count} tools, ~{mcp_tool_tokens:,} tokens"
-                        + " " * 20
-                    )
-                else:
-                    # Show why we fell back to estimate
-                    click.echo(
-                        "\r"
-                        + click.style("MCP: ", fg=TEAL_RGB)
-                        + f"~{mcp_tool_tokens:,} tokens (estimated - {mcp_error})"
-                        + " " * 10
-                    )
 
-            tool_tokens = env_tool_tokens + mcp_tool_tokens
-
-            total_prompt_tokens = max_prompt_tokens + tool_tokens
+            # Count tokens with proper format (includes Harmony rendering for gpt-oss)
+            total_prompt_tokens = get_max_prompt_tokens(train_jsonl_path, all_tools, model_path)
 
             # Show context window usage
             if total_prompt_tokens > 0:
+                is_gpt_oss = "gpt-oss" in model_path.lower()
+                format_note = " (Harmony format)" if is_gpt_oss else ""
                 click.echo(
                     click.style("Context: ", fg=TEAL_RGB)
-                    + f"~{max_prompt_tokens:,} prompt"
-                    + (f" + ~{tool_tokens:,} tools" if tool_tokens > 0 else "")
+                    + f"~{total_prompt_tokens:,} prompt+tools{format_note}"
                     + f" + {config.rollout.max_tokens:,} max_tokens"
                     + f" = ~{total_prompt_tokens + config.rollout.max_tokens:,}"
                     + f" / {models.MAX_CONTEXT_WINDOW:,}"
@@ -1968,11 +1869,12 @@ def run(
                     click.echo(click.style("✗ Context window exceeded", fg="red", bold=True))
                     click.echo()
                     click.echo(
-                        f"  Your longest prompt in train.jsonl is ~{max_prompt_tokens:,} tokens."
+                        f"  Total prompt context (with tools): ~{total_prompt_tokens:,} tokens."
                     )
-                    if tool_tokens > 0:
-                        click.echo(f"  Tool definitions add ~{tool_tokens:,} tokens.")
-                        click.echo(f"  Total prompt context: ~{total_prompt_tokens:,} tokens.")
+                    if is_gpt_oss:
+                        click.echo(
+                            "  Note: gpt-oss uses Harmony format which includes system overhead."
+                        )
                     click.echo(
                         f"  With max_tokens={config.rollout.max_tokens:,}, the total exceeds"
                     )

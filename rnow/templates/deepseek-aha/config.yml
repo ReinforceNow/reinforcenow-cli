@@ -6,10 +6,10 @@ dataset_type: rl
 organization_id: ""
 data:
   train_file: train.jsonl
-  batch_size: 4
+  batch_size: 32
   group_size: 16
 model:
-  path: Qwen/Qwen3-4B-Instruct-2507
+  path: openai/gpt-oss-20b
   qlora_rank: 32
   name: "Countdown Reasoning Model"
   description: "Reproduces DeepSeek R1 aha moment using GRPO on the Countdown game"

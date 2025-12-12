@@ -1,28 +1,29 @@
 project_id: ""
-project_name: "BrowseComp - Web Research Agent"
+project_name: "SimpleQA - Factual QA Agent"
 dataset_id: ""
-dataset_name: "browsecomp"
+dataset_name: "simpleqa"
 dataset_type: rl
 organization_id: ""
 data:
   train_file: train.jsonl
-  batch_size: 4
+  batch_size: 32
   group_size: 16
 model:
   path: Qwen/Qwen3-8B
   qlora_rank: 32
-  name: "BrowseComp Agent"
-  description: "Multi-turn RL model trained on BrowseComp web research tasks using Tavily MCP"
+  name: "SimpleQA Agent"
+  description: "Multi-turn RL model trained on SimpleQA factual questions using Tavily MCP"
 algorithm:
   loss_fn: ppo
   adv_estimator: grpo
   kl_penalty_coef: 0.01
 rollout:
-  max_turns: 5
-  max_tokens: 16384
+  max_turns: 3
+  max_tokens: 4096
   termination_policy: last_tool
   mcp_url: "https://mcp.tavily.com/mcp/?tavilyApiKey=YOUR_TAVILY_API_KEY"
+  max_tool_response_chars: 4000
 trainer:
   num_epochs: 4
   learning_rate: 0.0001
-  save_step: 421
+  save_step: 63

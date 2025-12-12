@@ -584,6 +584,17 @@ async def _test_async(
 
     max_turns = 1 if not multi_turn else max_turns_config
 
+    # Check for gpt-oss with tools - not supported in rnow test
+    is_gpt_oss = "gpt-oss" in model_name.lower() or "gptoss" in model_name.lower()
+    has_tools = with_tools and (env_path.exists() or (config.rollout and config.rollout.mcp_url))
+
+    if is_gpt_oss and has_tools:
+        click.echo(
+            click.style("Warning: ", fg="yellow")
+            + "Tool calling with gpt-oss models is not supported in 'rnow test'. Running without tools."
+        )
+        with_tools = False
+
     rewards = []
     tool_registry_to_use = TOOL_REGISTRY if with_tools else {}
 

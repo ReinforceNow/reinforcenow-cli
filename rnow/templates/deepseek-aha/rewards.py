@@ -5,10 +5,9 @@ from rnow.core import RewardArgs, reward
 
 @reward(precondition=True)
 async def format(args: RewardArgs, messages: list) -> float:
-    """Check for <think>...</think><answer>...</answer> format."""
+    """Check for \\boxed{} format."""
     response = messages[-1]["content"]
-    pattern = r"<think>.*?</think>\s*<answer>.*?</answer>"
-    return 1.0 if re.search(pattern, response, re.DOTALL) else 0.0
+    return 1.0 if re.search(r"\\boxed\{", response) else 0.0
 
 
 @reward
@@ -18,14 +17,18 @@ async def accuracy(args: RewardArgs, messages: list) -> float:
     target = args.metadata["target"]
     numbers = args.metadata["numbers"]
 
-    # Extract equation from <answer> tags
-    match = re.search(r"<answer>\s*(.*?)\s*</answer>", response, re.DOTALL)
-    if not match:
+    # Extract equation from \boxed{} (take the last one)
+    matches = re.findall(r"\\boxed\{([^}]*)\}", response)
+    if not matches:
         return 0.0
 
-    equation = match.group(1).strip()
+    equation = matches[-1].strip()
 
-    # Check all numbers used exactly once.
+    # Handle "equation = result" format - extract just the left side
+    if "=" in equation:
+        equation = equation.split("=")[0].strip()
+
+    # Check all numbers used exactly once
     used = [int(n) for n in re.findall(r"\d+", equation)]
     if sorted(used) != sorted(numbers):
         return 0.0
