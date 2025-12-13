@@ -9,7 +9,7 @@ data:
   batch_size: 32
   group_size: 16
 model:
-  path: openai/gpt-oss-20b
+  path: Qwen/Qwen3-8B
   qlora_rank: 32
   name: "Countdown Reasoning Model"
   description: "Reproduces DeepSeek R1 aha moment using GRPO on the Countdown game"
