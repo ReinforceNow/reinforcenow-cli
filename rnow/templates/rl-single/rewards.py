@@ -4,7 +4,7 @@ from rnow.core import RewardArgs, reward
 
 
 @reward
-async def accuracy(args: RewardArgs, messages: list) -> float:
+def accuracy(args: RewardArgs, messages: list) -> float:
     gold = parse(args.metadata["expected_answer"])
     pred = parse(
         messages[-1]["content"], extraction_config=[LatexExtractionConfig(boxed_match_priority=0)]

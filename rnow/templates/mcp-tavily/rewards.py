@@ -6,7 +6,7 @@ from rnow.core import RewardArgs, reward
 
 
 @reward
-async def accuracy(args: RewardArgs, messages: list) -> float:
+def accuracy(args: RewardArgs, messages: list) -> float:
     """Check if the final answer matches the expected answer."""
     response = messages[-1].get("content", "")
     expected = args.metadata.get("expected_answer", "").strip().lower()

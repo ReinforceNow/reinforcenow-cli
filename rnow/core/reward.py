@@ -2,9 +2,11 @@
 Reward entry point for ReinforceNow with validation.
 
 Validates at decorator-time:
-- Function is async
 - Function has correct signature: (args: RewardArgs, messages: list) -> float
 - Function has docstring or description
+
+Both sync and async functions are supported. Execution strategy is
+determined automatically at runtime.
 """
 
 import inspect
@@ -64,16 +66,13 @@ def _validate_reward_signature(func: Callable) -> None:
     Validate that a reward function has the correct signature.
 
     Expected signature:
-        async def reward_fn(args: RewardArgs, messages: list) -> float
+        def reward_fn(args: RewardArgs, messages: list) -> float
+
+    Both sync and async functions are supported.
 
     Raises:
         TypeError: If signature doesn't match expected format
     """
-    # Check if function is async
-    if not inspect.iscoroutinefunction(func):
-        raise TypeError(
-            f"Reward '{func.__name__}' must be an async function. " "Add 'async' before 'def'."
-        )
 
     sig = inspect.signature(func)
     params = list(sig.parameters.values())
@@ -133,18 +132,20 @@ def reward(fn: Callable = None, *, precondition: bool = False) -> Callable:
     Decorator to register reward functions with validation.
 
     Validates at decorator-time:
-    - Function is async
     - Signature is (args: RewardArgs, messages: list) -> float
+
+    Both sync and async functions are supported. Execution strategy
+    is determined automatically at runtime.
 
     Usage:
         @reward
-        async def accuracy(args: RewardArgs, messages: list) -> float:
+        def accuracy(args: RewardArgs, messages: list) -> float:
             ground_truth = args.metadata.get("ground_truth")
             response = messages[-1].get("content", "")
             return 1.0 if ground_truth in response else 0.0
 
         @reward(precondition=True)  # Mark as precondition reward
-        async def format_check(args: RewardArgs, messages: list) -> float:
+        def format_check(args: RewardArgs, messages: list) -> float:
             # If this returns 0, total reward is 0
             # If this returns 1, total reward is 1 + sum(other rewards)
             return 1.0 if valid_format else 0.0
@@ -190,9 +191,10 @@ def validate_rewards_file(filepath) -> list:
     Validate a rewards.py file without executing it.
 
     Parses the AST to find @reward decorated functions and checks:
-    - Function is async
     - Has correct number of parameters
     - Return values are between 0.0 and 1.0
+
+    Both sync and async functions are supported.
 
     Returns a list of error messages (empty if valid).
     """
@@ -262,11 +264,7 @@ def validate_rewards_file(filepath) -> list:
                     is_reward = True
 
             if is_reward:
-                # Check if async
-                if not isinstance(node, ast.AsyncFunctionDef):
-                    errors.append(
-                        f"Reward '{node.name}' must be an async function. Add 'async' before 'def'."
-                    )
+                # Both async and sync functions are allowed
 
                 # Check parameter count
                 params = node.args.args

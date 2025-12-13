@@ -342,16 +342,19 @@ def tool(fn: Callable = None) -> Callable:
     - All parameters have type hints
     - Return type is declared and JSON-serializable
 
+    Both sync and async functions are supported. Execution strategy
+    is determined automatically at runtime.
+
     Usage:
         @tool
-        def multiply(a: int, b: int) -> int:
-            '''Multiply two numbers.'''
-            return a * b
+        def web_search(query: str) -> dict:
+            '''Search the web.'''
+            return requests.get(...).json()
 
         @tool
-        async def weather(location: str, units: Optional[str] = "celsius") -> dict:
-            '''Get weather for a location.'''
-            return {"temp": 72, "conditions": "sunny"}
+        def calculator(expr: str) -> float:
+            '''Evaluate math expression.'''
+            return eval(expr)
 
     Supported parameter types:
         - Primitives: str, int, float, bool
@@ -415,7 +418,8 @@ def validate_tools_file(filepath) -> list:
     - No *args/**kwargs
     - Has type annotations for all parameters
     - Has a return type annotation
-    - Function is async (required for proper sandbox execution)
+
+    Both sync and async functions are supported.
 
     Returns a list of error messages (empty if valid).
     """
@@ -448,12 +452,7 @@ def validate_tools_file(filepath) -> list:
                     is_tool = True
 
             if is_tool:
-                # Check that tool is async
-                if isinstance(node, ast.FunctionDef):
-                    errors.append(
-                        f"Tool '{node.name}' must be async. "
-                        f"Change 'def {node.name}(...)' to 'async def {node.name}(...)'."
-                    )
+                # Both async and sync functions are allowed
 
                 # Check for docstring using ast.get_docstring (canonical way)
                 doc = ast.get_docstring(node)

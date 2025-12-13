@@ -4,14 +4,14 @@ from rnow.core import RewardArgs, reward
 
 
 @reward(precondition=True)
-async def format(args: RewardArgs, messages: list) -> float:
+def format(args: RewardArgs, messages: list) -> float:
     """Check for \\boxed{} format."""
     response = messages[-1]["content"]
     return 1.0 if re.search(r"\\boxed\{", response) else 0.0
 
 
 @reward
-async def accuracy(args: RewardArgs, messages: list) -> float:
+def accuracy(args: RewardArgs, messages: list) -> float:
     """Check if equation equals target and uses all numbers exactly once."""
     response = messages[-1]["content"]
     target = args.metadata["target"]

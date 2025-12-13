@@ -11,7 +11,7 @@ from rnow.core import RewardArgs, reward
 
 
 @reward(precondition=True)
-async def code_block(args: RewardArgs, messages: list) -> float:
+def code_block(args: RewardArgs, messages: list) -> float:
     """Precondition: Response must contain a ```typescript/tsx code block."""
     response = messages[-1].get("content", "")
     match = re.search(r"```(?:typescript|tsx|ts)\n(.*?)```", response, re.DOTALL)
@@ -19,7 +19,7 @@ async def code_block(args: RewardArgs, messages: list) -> float:
 
 
 @reward
-async def layout_syntax_1(args: RewardArgs, messages: list) -> float:
+def layout_syntax_1(args: RewardArgs, messages: list) -> float:
     """Reward for correct Next.js layout syntax with children prop."""
     response = messages[-1].get("content", "")
     match = re.search(r"```(?:typescript|tsx|ts)\n(.*?)```", response, re.DOTALL)
@@ -47,7 +47,7 @@ async def layout_syntax_1(args: RewardArgs, messages: list) -> float:
 
 
 @reward
-async def server_dynamic_segment_1(args: RewardArgs, messages: list) -> float:
+def server_dynamic_segment_1(args: RewardArgs, messages: list) -> float:
     """Reward for correct async param extraction in dynamic segment pages."""
     response = messages[-1].get("content", "")
     match = re.search(r"```(?:typescript|tsx|ts)\n(.*?)```", response, re.DOTALL)
@@ -73,7 +73,7 @@ async def server_dynamic_segment_1(args: RewardArgs, messages: list) -> float:
 
 
 @reward
-async def server_dynamic_segment_2(args: RewardArgs, messages: list) -> float:
+def server_dynamic_segment_2(args: RewardArgs, messages: list) -> float:
     """Reward for generateStaticParams pattern."""
     response = messages[-1].get("content", "")
     match = re.search(r"```(?:typescript|tsx|ts)\n(.*?)```", response, re.DOTALL)
@@ -107,7 +107,7 @@ async def server_dynamic_segment_2(args: RewardArgs, messages: list) -> float:
 
 
 @reward
-async def server_search_params(args: RewardArgs, messages: list) -> float:
+def server_search_params(args: RewardArgs, messages: list) -> float:
     """Reward for correct server searchParams handling."""
     response = messages[-1].get("content", "")
     match = re.search(r"```(?:typescript|tsx|ts)\n(.*?)```", response, re.DOTALL)
@@ -140,7 +140,7 @@ async def server_search_params(args: RewardArgs, messages: list) -> float:
 
 
 @reward
-async def use_client_directive(args: RewardArgs, messages: list) -> float:
+def use_client_directive(args: RewardArgs, messages: list) -> float:
     """Reward for correct 'use client' directive placement."""
     response = messages[-1].get("content", "")
     match = re.search(r"```(?:typescript|tsx|ts)\n(.*?)```", response, re.DOTALL)
@@ -156,7 +156,7 @@ async def use_client_directive(args: RewardArgs, messages: list) -> float:
 
 
 @reward
-async def metadata_export(args: RewardArgs, messages: list) -> float:
+def metadata_export(args: RewardArgs, messages: list) -> float:
     """Reward for valid metadata export."""
     response = messages[-1].get("content", "")
     match = re.search(r"```(?:typescript|tsx|ts)\n(.*?)```", response, re.DOTALL)
@@ -172,7 +172,7 @@ async def metadata_export(args: RewardArgs, messages: list) -> float:
 
 
 @reward
-async def error_boundary(args: RewardArgs, messages: list) -> float:
+def error_boundary(args: RewardArgs, messages: list) -> float:
     """Reward for valid error boundary component."""
     response = messages[-1].get("content", "")
     match = re.search(r"```(?:typescript|tsx|ts)\n(.*?)```", response, re.DOTALL)
@@ -207,7 +207,7 @@ async def error_boundary(args: RewardArgs, messages: list) -> float:
 
 
 @reward
-async def not_found_boundary(args: RewardArgs, messages: list) -> float:
+def not_found_boundary(args: RewardArgs, messages: list) -> float:
     """Reward for not-found boundary component."""
     response = messages[-1].get("content", "")
     match = re.search(r"```(?:typescript|tsx|ts)\n(.*?)```", response, re.DOTALL)
@@ -225,7 +225,7 @@ async def not_found_boundary(args: RewardArgs, messages: list) -> float:
 
 
 @reward
-async def loading_boundary(args: RewardArgs, messages: list) -> float:
+def loading_boundary(args: RewardArgs, messages: list) -> float:
     """Reward for loading boundary component."""
     response = messages[-1].get("content", "")
     match = re.search(r"```(?:typescript|tsx|ts)\n(.*?)```", response, re.DOTALL)
@@ -243,7 +243,7 @@ async def loading_boundary(args: RewardArgs, messages: list) -> float:
 
 
 @reward
-async def template_component(args: RewardArgs, messages: list) -> float:
+def template_component(args: RewardArgs, messages: list) -> float:
     """Reward for template component."""
     response = messages[-1].get("content", "")
     match = re.search(r"```(?:typescript|tsx|ts)\n(.*?)```", response, re.DOTALL)
@@ -270,7 +270,7 @@ async def template_component(args: RewardArgs, messages: list) -> float:
 
 
 @reward
-async def redirect_usage(args: RewardArgs, messages: list) -> float:
+def redirect_usage(args: RewardArgs, messages: list) -> float:
     """Reward for usage of Next.js redirect() helper."""
     response = messages[-1].get("content", "")
     match = re.search(r"```(?:typescript|tsx|ts)\n(.*?)```", response, re.DOTALL)
@@ -288,7 +288,7 @@ async def redirect_usage(args: RewardArgs, messages: list) -> float:
 
 
 @reward
-async def notfound_function_usage(args: RewardArgs, messages: list) -> float:
+def notfound_function_usage(args: RewardArgs, messages: list) -> float:
     """Reward for usage of Next.js notFound() function."""
     response = messages[-1].get("content", "")
     match = re.search(r"```(?:typescript|tsx|ts)\n(.*?)```", response, re.DOTALL)
@@ -306,7 +306,7 @@ async def notfound_function_usage(args: RewardArgs, messages: list) -> float:
 
 
 @reward
-async def generate_metadata_function(args: RewardArgs, messages: list) -> float:
+def generate_metadata_function(args: RewardArgs, messages: list) -> float:
     """Reward for dynamic generateMetadata() function."""
     response = messages[-1].get("content", "")
     match = re.search(r"```(?:typescript|tsx|ts)\n(.*?)```", response, re.DOTALL)
@@ -324,7 +324,7 @@ async def generate_metadata_function(args: RewardArgs, messages: list) -> float:
 
 
 @reward
-async def generate_metadata_object(args: RewardArgs, messages: list) -> float:
+def generate_metadata_object(args: RewardArgs, messages: list) -> float:
     """Reward for static metadata object export."""
     response = messages[-1].get("content", "")
     match = re.search(r"```(?:typescript|tsx|ts)\n(.*?)```", response, re.DOTALL)
@@ -340,7 +340,7 @@ async def generate_metadata_object(args: RewardArgs, messages: list) -> float:
 
 
 @reward
-async def route_handler_get(args: RewardArgs, messages: list) -> float:
+def route_handler_get(args: RewardArgs, messages: list) -> float:
     """Reward for GET route handler in Next.js Route Handlers."""
     response = messages[-1].get("content", "")
     match = re.search(r"```(?:typescript|tsx|ts)\n(.*?)```", response, re.DOTALL)
@@ -358,7 +358,7 @@ async def route_handler_get(args: RewardArgs, messages: list) -> float:
 
 
 @reward
-async def route_handler_post(args: RewardArgs, messages: list) -> float:
+def route_handler_post(args: RewardArgs, messages: list) -> float:
     """Reward for POST route handler in Next.js Route Handlers."""
     response = messages[-1].get("content", "")
     match = re.search(r"```(?:typescript|tsx|ts)\n(.*?)```", response, re.DOTALL)
@@ -376,7 +376,7 @@ async def route_handler_post(args: RewardArgs, messages: list) -> float:
 
 
 @reward
-async def default_page_component(args: RewardArgs, messages: list) -> float:
+def default_page_component(args: RewardArgs, messages: list) -> float:
     """Reward for default page component."""
     response = messages[-1].get("content", "")
     match = re.search(r"```(?:typescript|tsx|ts)\n(.*?)```", response, re.DOTALL)
@@ -394,7 +394,7 @@ async def default_page_component(args: RewardArgs, messages: list) -> float:
 
 
 @reward
-async def client_component_detection(args: RewardArgs, messages: list) -> float:
+def client_component_detection(args: RewardArgs, messages: list) -> float:
     """Reward for client components using 'use client' directive."""
     response = messages[-1].get("content", "")
     match = re.search(r"```(?:typescript|tsx|ts)\n(.*?)```", response, re.DOTALL)
@@ -412,7 +412,7 @@ async def client_component_detection(args: RewardArgs, messages: list) -> float:
 
 
 @reward
-async def server_component_detection(args: RewardArgs, messages: list) -> float:
+def server_component_detection(args: RewardArgs, messages: list) -> float:
     """Reward for server components (without 'use client')."""
     response = messages[-1].get("content", "")
     match = re.search(r"```(?:typescript|tsx|ts)\n(.*?)```", response, re.DOTALL)
@@ -429,7 +429,7 @@ async def server_component_detection(args: RewardArgs, messages: list) -> float:
 
 
 @reward
-async def parallel_route_segment(args: RewardArgs, messages: list) -> float:
+def parallel_route_segment(args: RewardArgs, messages: list) -> float:
     """Reward for parallel route segments (e.g., @modal)."""
     response = messages[-1].get("content", "")
     match = re.search(r"```(?:typescript|tsx|ts)\n(.*?)```", response, re.DOTALL)
