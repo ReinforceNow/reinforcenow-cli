@@ -24,10 +24,6 @@ async def accuracy(args: RewardArgs, messages: list) -> float:
 
     equation = matches[-1].strip()
 
-    # Handle "equation = result" format - extract just the left side
-    if "=" in equation:
-        equation = equation.split("=")[0].strip()
-
     # Check all numbers used exactly once
     used = [int(n) for n in re.findall(r"\d+", equation)]
     if sorted(used) != sorted(numbers):

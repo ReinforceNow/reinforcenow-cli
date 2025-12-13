@@ -17,7 +17,9 @@ async def accuracy(args: RewardArgs, messages: list) -> float:
         return 0.0
 
     answer = matches[-1]
-    # Disable signal-based timeouts for async/threaded environments
-    gold = parse(expected, parsing_timeout=None)
-    pred = parse(answer, parsing_timeout=None)
+
+    # Wrap in \boxed{} to give math_verify proper LaTeX context
+    # (required for tuples, complex expressions, etc.)
+    gold = parse(rf"\boxed{{{expected}}}", parsing_timeout=None)
+    pred = parse(rf"\boxed{{{answer}}}", parsing_timeout=None)
     return 1.0 if verify(gold, pred, timeout_seconds=None) else 0.0
