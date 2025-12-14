@@ -34,7 +34,7 @@ rnow login
 ### 3. Create & Run Your First Project
 
 ```bash
-rnow init --template rl-single
+rnow init --template sft
 rnow run
 ```
 
