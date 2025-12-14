@@ -11,10 +11,10 @@ rnow = ["templates/**/*"]
 
 [project]
 name = "rnow"
-version = "0.2.5"
+version = "0.2.6"
 description = "ReinforceNow CLI - Reinforcement Learning platform command-line interface"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.15"
 dependencies = [
     # Core CLI deps - lightweight, cross-platform
     "click>=8.0.0",
