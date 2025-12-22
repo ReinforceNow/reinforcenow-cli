@@ -1828,9 +1828,7 @@ def run(
                     click.echo(f"  rnow is running from: {click.style(sys.executable, dim=True)}")
                     click.echo()
                     click.echo("  Install it with:")
-                    click.echo(
-                        click.style(f"    {sys.executable} -m pip install fastmcp", fg=TEAL_RGB)
-                    )
+                    click.echo(click.style("    uv pip install fastmcp", fg=TEAL_RGB))
                     click.echo()
                     raise click.ClickException("Missing dependency: fastmcp")
 

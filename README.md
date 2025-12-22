@@ -19,19 +19,33 @@ See the [documentation](https://www.reinforcenow.ai/docs/getting-started/quickst
 
 # Quick Start
 
-### 1. Install
+### 1. Install uv (Python package manager)
 
+**macOS/Linux:**
 ```bash
-pip install rnow
+curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-### 2. Authenticate
+**Windows:**
+```powershell
+powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+### 2. Install ReinforceNow
+
+```bash
+uv init && uv venv --python 3.11
+source .venv/bin/activate  # On Windows: .\.venv\Scripts\Activate.ps1
+uv pip install rnow
+```
+
+### 3. Authenticate
 
 ```bash
 rnow login
 ```
 
-### 3. Create & Run Your First Project
+### 4. Create & Run Your First Project
 
 ```bash
 rnow init --template sft

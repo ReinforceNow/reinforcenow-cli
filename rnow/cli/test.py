@@ -391,7 +391,7 @@ def _check_test_dependencies():
             click.style("Error: ", fg="red", bold=True)
             + "The 'rnow test' command requires additional dependencies."
         )
-        pip_cmd = "pip install 'rnow[test]'"
+        pip_cmd = "uv pip install 'rnow[test]'"
         click.echo(f"Install them with: {click.style(pip_cmd, fg=TEAL_RGB)}")
         click.echo()
         raise SystemExit(1)
