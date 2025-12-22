@@ -21,21 +21,19 @@ See the [documentation](https://www.reinforcenow.ai/docs/getting-started/quickst
 
 ### 1. Install uv (Python package manager)
 
-**macOS/Linux:**
 ```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-```
+# macOS/Linux:
+$ curl -LsSf https://astral.sh/uv/install.sh | sh
 
-**Windows:**
-```powershell
-powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
+# Windows:
+# PS> powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
 ### 2. Install ReinforceNow
 
 ```bash
 uv init && uv venv --python 3.11
-source .venv/bin/activate  # On Windows: .\.venv\Scripts\Activate.ps1
+source .venv/bin/activate  # Windows: .\.venv\Scripts\Activate.ps1
 uv pip install rnow
 ```
 
