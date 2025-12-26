@@ -97,6 +97,7 @@ class ModelCompleter:
         self.session_id: str | None = None  # Cached session ID for reuse
         self.total_latency_ms = 0
         self.request_count = 0
+        self.total_charged_dollars = 0.0  # Track total billing
 
         # Initialize tokenizer and renderer
         from tinker_cookbook import renderers
@@ -147,10 +148,12 @@ class ModelCompleter:
         if "session_id" in data and data["session_id"]:
             self.session_id = data["session_id"]
 
-        # Track latency
+        # Track latency and billing
         if "latency_ms" in data:
             self.total_latency_ms += data["latency_ms"]
             self.request_count += 1
+        if "billing" in data and "charged_dollars" in data["billing"]:
+            self.total_charged_dollars += data["billing"]["charged_dollars"]
 
         # Decode tokens back to text
         output_tokens = data.get("tokens", [])
@@ -163,25 +166,6 @@ class ModelCompleter:
 
     async def close(self):
         await self.client.aclose()
-
-
-async def flush_pending_charges(api_url: str) -> dict | None:
-    """
-    Flush any pending ROLLOUT charges at the end of the test.
-    Returns the flush result or None if it failed.
-    """
-    try:
-        headers = get_auth_headers()
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(
-                f"{api_url.rstrip('/')}/api/billing/flush-rollout",
-                headers=headers,
-            )
-            resp.raise_for_status()
-            return resp.json()
-    except Exception as e:
-        click.echo(click.style(f"Warning: Failed to flush pending charges: {e}", fg="yellow"))
-        return None
 
 
 def _exec_file(path: Path, module_name: str) -> None:
@@ -701,6 +685,9 @@ async def _test_async(
             )
             click.echo()
 
+        # Calculate total billing from all completers
+        total_charged = sum(c.total_charged_dollars for c in completers)
+
         # Close all completers
         for c in completers:
             await c.close()
@@ -708,21 +695,12 @@ async def _test_async(
     except Exception:
         raise
 
-    # Flush any pending billing charges
-    flush_result = await flush_pending_charges(api_url)
-
     if rewards:
         mean_reward = sum(rewards) / len(rewards)
         click.echo()
         click.echo(f"Mean reward: {click.style(f'{mean_reward:.3f}', fg=TEAL_RGB)}")
         click.echo(f"Latency: {click.style(f'{total_time:.1f}s', fg=TEAL_RGB)}")
+        if total_charged > 0:
+            click.echo(f"Cost: {click.style(f'${total_charged:.4f}', fg=TEAL_RGB)}")
     else:
         click.echo(click.style("\nNo successful rollouts completed.", fg="yellow"))
-
-    # Show billing summary if charges were flushed
-    if flush_result and flush_result.get("flushed"):
-        amount_cents = flush_result.get("amountCents", 0)
-        total_tokens = flush_result.get("totalTokens", 0)
-        click.echo(
-            f"Billing: {click.style(f'${amount_cents/100:.2f}', fg=TEAL_RGB)} ({total_tokens:,} tokens)"
-        )

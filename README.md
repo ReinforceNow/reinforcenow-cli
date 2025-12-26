@@ -26,7 +26,7 @@ See the [documentation](https://www.reinforcenow.ai/docs/getting-started/quickst
 $ curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # Windows:
-# PS> powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
+PS> powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
 ### 2. Install ReinforceNow
