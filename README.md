@@ -105,7 +105,7 @@ Create a `train.jsonl` file with your prompts and reward assignments:
 
 # Contributing
 
-We welcome contributions! ❤️ Please open an issue to discuss your ideas before submitting a PR.
+We welcome contributions! ❤️ Please open an issue to discuss your ideas before submitting a PR
 
 <br>
 <div align="center">
