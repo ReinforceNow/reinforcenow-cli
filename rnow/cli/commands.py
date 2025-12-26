@@ -1948,6 +1948,26 @@ def run(
         mcp_url = config.rollout.mcp_url
         mcp_url_count = len(mcp_url) if isinstance(mcp_url, list) else 1
 
+    # Validate tool support for the model
+    has_tools = has_env_py or has_mcp_url
+    if has_tools and not models.supports_tool_calling(model_path):
+        click.echo()
+        click.echo(click.style("✗ Model does not support tool calling", fg="red", bold=True))
+        click.echo()
+        click.echo(f"  Model {model_path} does not support tool calling.")
+        if "gpt-oss" in model_path.lower():
+            click.echo("  OpenAI gpt-oss models use a format that doesn't support tools.")
+        else:
+            click.echo("  Base/non-instruct models use a format that doesn't support tools.")
+        click.echo()
+        click.echo(click.style("  Options:", bold=True))
+        click.echo("  1. Remove env.py and mcp_url from your project")
+        click.echo(
+            "  2. Use a model that supports tools (e.g., Qwen/Qwen3-8B, meta-llama/Llama-3.1-8B-Instruct)"
+        )
+        click.echo()
+        raise click.ClickException("Model does not support tool calling")
+
     # Show tool sources message
     if has_env_py and has_mcp_url:
         server_text = f"{mcp_url_count} server(s)" if mcp_url_count > 1 else "1 server"

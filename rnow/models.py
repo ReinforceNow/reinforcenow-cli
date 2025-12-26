@@ -97,7 +97,7 @@ class Organizations(BaseModel):
 
 # Supported model IDs
 SUPPORTED_MODELS = Literal[
-    # Qwen models
+    # Qwen models (text)
     "Qwen/Qwen3-235B-A22B-Instruct-2507",
     "Qwen/Qwen3-30B-A3B-Instruct-2507",
     "Qwen/Qwen3-30B-A3B",
@@ -106,7 +106,10 @@ SUPPORTED_MODELS = Literal[
     "Qwen/Qwen3-8B",
     "Qwen/Qwen3-8B-Base",
     "Qwen/Qwen3-4B-Instruct-2507",
-    # OpenAI models
+    # Qwen models (vision)
+    "Qwen/Qwen3-VL-235B-A22B-Instruct",
+    "Qwen/Qwen3-VL-30B-A3B-Instruct",
+    # OpenAI models (reasoning)
     "openai/gpt-oss-120b",
     "openai/gpt-oss-20b",
     # DeepSeek models
@@ -119,6 +122,8 @@ SUPPORTED_MODELS = Literal[
     "meta-llama/Llama-3.1-8B-Instruct",
     "meta-llama/Llama-3.2-3B",
     "meta-llama/Llama-3.2-1B",
+    # Moonshot models (reasoning)
+    "moonshotai/Kimi-K2-Thinking",
 ]
 
 # Maximum context window for all supported models
@@ -127,15 +132,41 @@ MAX_CONTEXT_WINDOW = 32768
 # Conservative max_tokens limit (leaves room for prompts)
 MAX_GENERATION_TOKENS = 30000
 
+# Models that do NOT support tool calling
+# - gpt-oss models use GptOssRenderer which doesn't support tools
+# - Base/non-instruct models use RoleColonRenderer which doesn't support tools
+MODELS_WITHOUT_TOOL_SUPPORT: set[str] = {
+    # OpenAI reasoning models (GptOssRenderer)
+    "openai/gpt-oss-120b",
+    "openai/gpt-oss-20b",
+    # Base models (RoleColonRenderer)
+    "Qwen/Qwen3-30B-A3B-Base",
+    "Qwen/Qwen3-8B-Base",
+    "deepseek-ai/DeepSeek-V3.1-Base",
+    "meta-llama/Llama-3.1-70B",
+    "meta-llama/Llama-3.1-8B",
+    "meta-llama/Llama-3.2-3B",
+    "meta-llama/Llama-3.2-1B",
+}
+
+
+def supports_tool_calling(model_path: str) -> bool:
+    """Check if a model supports tool calling."""
+    return model_path not in MODELS_WITHOUT_TOOL_SUPPORT
+
+
 # Maximum LoRA rank per model
 # Models not listed here default to 128
 MODEL_MAX_LORA_RANK: dict[str, int] = {
-    # Max 32
+    # Max 32 (reasoning models)
     "openai/gpt-oss-120b": 32,
     "openai/gpt-oss-20b": 32,
-    # Max 64
+    "moonshotai/Kimi-K2-Thinking": 32,
+    # Max 64 (large MoE models)
     "Qwen/Qwen3-235B-A22B-Instruct-2507": 64,
+    "Qwen/Qwen3-VL-235B-A22B-Instruct": 64,
     "Qwen/Qwen3-30B-A3B-Instruct-2507": 64,
+    "Qwen/Qwen3-VL-30B-A3B-Instruct": 64,
     "Qwen/Qwen3-30B-A3B": 64,
     "Qwen/Qwen3-30B-A3B-Base": 64,
     "deepseek-ai/DeepSeek-V3.1": 64,
