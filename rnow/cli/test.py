@@ -6,6 +6,7 @@ Requires authentication for billing.
 """
 
 import asyncio
+import inspect
 import itertools
 import json
 import random
@@ -240,7 +241,6 @@ async def _run_single_rollout(
     verbose: bool = False,
 ) -> dict:
     """Run a single rollout for an RL sample."""
-    import inspect
 
     messages_templates = sample["messages"]
     reward_names = sample["rewards"]
@@ -351,7 +351,12 @@ async def _run_single_rollout(
     reward_args = RewardArgs(metadata=metadata, variables=variables)
     rewards = {}
     for fn, name in zip(reward_fns, reward_names, strict=False):
-        value = await fn(reward_args, conversation)
+        result = fn(reward_args, conversation)
+        # Handle both sync and async reward functions
+        if inspect.iscoroutine(result):
+            value = await result
+        else:
+            value = result
         rewards[name] = value
 
     total_reward = compute_total_reward(rewards) if rewards else 0.0
@@ -526,7 +531,7 @@ async def _test_async(
     from rnow.models import MAX_CONTEXT_WINDOW
 
     if config.rollout:
-        max_prompt_tokens = get_max_prompt_tokens(train_path)
+        max_prompt_tokens = get_max_prompt_tokens(train_path, [])  # No tools loaded yet
         if max_prompt_tokens > 0:
             context_error, recommended = validate_max_tokens_for_context(
                 config.rollout.max_tokens, max_prompt_tokens
@@ -603,7 +608,7 @@ async def _test_async(
         selected_samples = [random.choice(samples) for _ in range(num_rollouts)]
 
         # Start spinner for concurrent rollouts
-        spinner = Spinner(f"Running {num_rollouts} rollouts concurrently...")
+        spinner = Spinner(f"Running {num_rollouts} rollouts...")
         spinner.start()
 
         async def run_rollout_with_index(idx: int) -> tuple[int, dict | Exception]:
