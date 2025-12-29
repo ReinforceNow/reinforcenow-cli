@@ -8,7 +8,7 @@
 
 [![PyPI version](https://img.shields.io/pypi/v/rnow?color=blue)](https://pypi.org/project/rnow/)
 [![Docs](https://img.shields.io/badge/docs-reinforcenow.ai-blue)](https://reinforcenow.ai/docs)
-[![Follow on X](https://img.shields.io/badge/Follow_on_X-@reinforcenow-black?labelColor=white)](https://x.com/reinforcenowai)
+[![Follow on X](https://img.shields.io/badge/Follow_on_X-@reinforcenow-black?labelColor=white)](https://x.com/reinforcenow)
 [![MIT License](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
 
 </div>

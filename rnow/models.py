@@ -37,7 +37,7 @@ class OrgRole(str, Enum):
 
 
 class DatasetType(str, Enum):
-    SFT = "sft"  # Supervised Fine-Tuning
+    SFT = "sft"  # Supervised Finetuning
     RL = "rl"  # Reinforcement Learning
 
 
