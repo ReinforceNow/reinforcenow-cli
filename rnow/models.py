@@ -267,6 +267,10 @@ class RolloutConfig(BaseModel):
         gt=0,
         description="Maximum characters for tool responses. Longer responses are truncated. Set to null/None to disable truncation.",
     )
+    include_thinking: bool = Field(
+        default=False,
+        description="Whether to include <think>...</think> blocks in messages passed to reward functions. Default is False (thinking is stripped).",
+    )
 
 
 class TrainerConfig(BaseModel):
