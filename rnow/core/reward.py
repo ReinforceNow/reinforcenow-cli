@@ -32,6 +32,14 @@ def is_precondition(name: str) -> bool:
     return getattr(fn, "_is_precondition", False)
 
 
+def is_sandbox_reward(name: str) -> bool:
+    """Check if a reward function should run inside the Docker sandbox."""
+    fn = REWARD_REGISTRY.get(name)
+    if fn is None:
+        return False
+    return getattr(fn, "_is_sandbox", False)
+
+
 def compute_total_reward(reward_results: dict[str, float]) -> float:
     """
     Compute total reward with precondition logic.
@@ -127,7 +135,7 @@ def _validate_reward_signature(func: Callable) -> None:
         raise TypeError(f"Reward '{func.__name__}' must return 'float', got '{return_type}'.")
 
 
-def reward(fn: Callable = None, *, precondition: bool = False) -> Callable:
+def reward(fn: Callable = None, *, precondition: bool = False, sandbox: bool = False) -> Callable:
     """
     Decorator to register reward functions with validation.
 
@@ -150,10 +158,23 @@ def reward(fn: Callable = None, *, precondition: bool = False) -> Callable:
             # If this returns 1, total reward is 1 + sum(other rewards)
             return 1.0 if valid_format else 0.0
 
+        @reward(sandbox=True)  # Run inside Docker sandbox
+        def test_code(args: RewardArgs, messages: list) -> float:
+            # This executes inside the sandbox container
+            # Has access to files created by LLM, can run pytest, etc.
+            import subprocess
+            result = subprocess.run(["pytest", "-q"])
+            return 1.0 if result.returncode == 0 else 0.0
+
     Args:
         precondition: If True, this reward acts as a gate:
             - If precondition reward is 0, total reward is 0
             - If precondition reward is 1, total reward is 1 + sum(other rewards)
+        sandbox: If True, this reward runs inside the Docker sandbox container
+            instead of the trainer. Useful for rewards that need to:
+            - Access files created during LLM interaction
+            - Run tests (pytest, etc.)
+            - Execute code in the same environment as tools
     """
 
     def decorator(func):
@@ -177,6 +198,7 @@ def reward(fn: Callable = None, *, precondition: bool = False) -> Callable:
         func._is_reward = True
         func._reward_name = func.__name__
         func._is_precondition = precondition
+        func._is_sandbox = sandbox
 
         # Register the function
         REWARD_REGISTRY[func.__name__] = func

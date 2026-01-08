@@ -14,9 +14,10 @@ from .reward import (
     clear_reward_registry,
     compute_total_reward,
     is_precondition,
+    is_sandbox_reward,
     reward,
 )
-from .tool import TOOL_REGISTRY, clear_tool_registry, tool
+from .tool import TOOL_REGISTRY, clear_tool_registry, is_sandbox_tool, tool
 
 __all__ = [
     # User-facing API
@@ -29,5 +30,7 @@ __all__ = [
     "clear_reward_registry",
     "clear_tool_registry",
     "is_precondition",
+    "is_sandbox_reward",
+    "is_sandbox_tool",
     "compute_total_reward",
 ]

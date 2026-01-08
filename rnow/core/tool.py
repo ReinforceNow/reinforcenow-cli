@@ -34,6 +34,14 @@ def clear_tool_registry() -> None:
     TOOL_REGISTRY.clear()
 
 
+def is_sandbox_tool(name: str) -> bool:
+    """Check if a tool should run inside the Docker sandbox."""
+    fn = TOOL_REGISTRY.get(name)
+    if fn is None:
+        return False
+    return getattr(fn, "_is_sandbox", False)
+
+
 def _map_type_to_json_schema(py_type: Any) -> dict[str, Any]:
     """
     Map a Python type annotation to a JSON Schema fragment.
@@ -332,7 +340,7 @@ def _try_coerce(value: Any, expected_types: list[str]) -> tuple[bool, Any]:
     return False, value
 
 
-def tool(fn: Callable = None) -> Callable:
+def tool(fn: Callable = None, *, sandbox: bool = False) -> Callable:
     """
     Decorator to register tool functions with robust validation.
 
@@ -351,10 +359,12 @@ def tool(fn: Callable = None) -> Callable:
             '''Search the web.'''
             return requests.get(...).json()
 
-        @tool
-        def calculator(expr: str) -> float:
-            '''Evaluate math expression.'''
-            return eval(expr)
+        @tool(sandbox=True)  # Run inside Docker sandbox
+        def run_python(code: str) -> str:
+            '''Execute Python code in isolated environment.'''
+            import subprocess
+            result = subprocess.run(["python", "-c", code], capture_output=True)
+            return result.stdout.decode()
 
     Supported parameter types:
         - Primitives: str, int, float, bool
@@ -362,6 +372,14 @@ def tool(fn: Callable = None) -> Callable:
         - Optional: Optional[T], T | None
         - Literal: Literal["option1", "option2"]
         - Union: Union[str, int]
+
+    Args:
+        sandbox: If True, this tool runs inside the Docker sandbox container.
+            Required when the train.jsonl entry has a "docker" field.
+            Tools with sandbox=True can:
+            - Execute code in an isolated environment
+            - Create/modify files that sandbox rewards can check
+            - Access custom dependencies installed in the Docker image
     """
 
     def decorator(func: Callable) -> Callable:
@@ -400,12 +418,13 @@ def tool(fn: Callable = None) -> Callable:
         func._tool_name = func.__name__
         func._schema = schema
         func._description = doc  # Already validated and stripped above
+        func._is_sandbox = sandbox
 
         TOOL_REGISTRY[func._tool_name] = func
 
         return func
 
-    # Support both @tool and @tool()
+    # Support both @tool and @tool(sandbox=True)
     return decorator(fn) if fn else decorator
 
 

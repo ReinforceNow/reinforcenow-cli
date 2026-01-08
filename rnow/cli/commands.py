@@ -471,6 +471,38 @@ def validate_train_jsonl(
     return errors
 
 
+def validate_docker_requires_mcp_url(path: Path, config: models.ProjectConfig) -> str | None:
+    """
+    Validate that if any row in train.jsonl has 'docker' field, config must have mcp_url.
+    Returns error message if invalid, None if valid.
+    """
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line_num, line in enumerate(f, start=1):
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                try:
+                    record = json.loads(stripped)
+                    if record.get("docker"):
+                        # Found docker field - check if mcp_url is configured
+                        has_mcp_url = config.rollout and config.rollout.mcp_url
+                        if not has_mcp_url:
+                            return (
+                                f"Line {line_num} has 'docker' field but config.yml has no 'mcp_url'. "
+                                "You must specify the MCP server URL your Docker image exposes. "
+                                "Add to config.yml:\n\n"
+                                "rollout:\n"
+                                "  mcp_url: http://localhost:8000  # port your MCP server listens on"
+                            )
+                        return None  # Valid - has both docker and mcp_url
+                except json.JSONDecodeError:
+                    continue
+    except Exception:
+        pass
+    return None
+
+
 from functools import lru_cache
 
 
@@ -1350,6 +1382,11 @@ def _submit_single_run(
         jsonl_errors = validate_train_jsonl(train_jsonl_path, config.dataset_type)
         if jsonl_errors:
             raise click.ClickException(f"Invalid train.jsonl: {jsonl_errors[0]}")
+
+        # Validate docker + mcp_url requirement
+        docker_error = validate_docker_requires_mcp_url(train_jsonl_path, config)
+        if docker_error:
+            raise click.ClickException(docker_error)
 
     # Validate rewards.py if present
     if config.dataset_type == models.DatasetType.RL:
