@@ -377,25 +377,124 @@ def fetch_mcp_tool_schemas(
     return all_tools, None
 
 
+def get_sandbox_names_from_file(filepath: Path, decorator_name: str) -> set[str]:
+    """
+    Extract function names with sandbox=True from a file.
+
+    Args:
+        filepath: Path to rewards.py or env.py
+        decorator_name: "reward" or "tool"
+
+    Returns:
+        Set of function names that have sandbox=True
+    """
+    import ast
+
+    names = set()
+    if not filepath.exists():
+        return names
+
+    try:
+        source = filepath.read_text()
+        tree = ast.parse(source, filename=str(filepath))
+    except SyntaxError:
+        return names
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            for decorator in node.decorator_list:
+                # Check for @decorator_name(sandbox=True)
+                if (
+                    isinstance(decorator, ast.Call)
+                    and isinstance(decorator.func, ast.Name)
+                    and decorator.func.id == decorator_name
+                ):
+                    for kw in decorator.keywords:
+                        if kw.arg == "sandbox":
+                            # Check if value is True
+                            if isinstance(kw.value, ast.Constant) and kw.value.value is True:
+                                names.add(node.name)
+                            elif isinstance(kw.value, ast.NameConstant) and kw.value.value is True:
+                                names.add(node.name)  # Python 3.7 compat
+    return names
+
+
+def validate_sandbox_docker_requirement(
+    train_jsonl_path: Path, rewards_py_path: Path, env_py_path: Path
+) -> list[str]:
+    """
+    Validate that entries using sandbox=True tools/rewards have a docker field.
+
+    Returns:
+        List of error messages (empty if valid)
+    """
+    errors = []
+
+    # Get sandbox function names
+    sandbox_rewards = get_sandbox_names_from_file(rewards_py_path, "reward")
+    sandbox_tools = get_sandbox_names_from_file(env_py_path, "tool")
+
+    if not sandbox_rewards and not sandbox_tools:
+        return []  # No sandbox functions, nothing to validate
+
+    try:
+        with open(train_jsonl_path, encoding="utf-8") as f:
+            for line_num, line in enumerate(f, start=1):
+                stripped = line.strip()
+                if not stripped:
+                    continue
+
+                try:
+                    record = json.loads(stripped)
+                except json.JSONDecodeError:
+                    continue
+
+                # Check if entry references sandbox rewards/tools
+                entry_rewards = set(record.get("rewards", []))
+                entry_tools = set(record.get("tools", []))
+
+                uses_sandbox_reward = bool(sandbox_rewards & entry_rewards)
+                uses_sandbox_tool = bool(sandbox_tools & entry_tools)
+
+                if (uses_sandbox_reward or uses_sandbox_tool) and not record.get("docker"):
+                    used = []
+                    if uses_sandbox_reward:
+                        used.extend(f"reward:{r}" for r in sandbox_rewards & entry_rewards)
+                    if uses_sandbox_tool:
+                        used.extend(f"tool:{t}" for t in sandbox_tools & entry_tools)
+                    errors.append(
+                        f"Line {line_num}: Uses sandbox functions ({', '.join(used)}) but missing 'docker' field"
+                    )
+                    if len(errors) >= 5:
+                        errors.append("... (stopping after 5 errors)")
+                        return errors
+
+    except Exception as e:
+        errors.append(f"Failed to validate sandbox requirements: {e}")
+
+    return errors
+
+
 def validate_train_jsonl(
     path: Path, dataset_type: models.DatasetType, sample_size: int = 50
 ) -> list[str]:
     """
-    Validate train.jsonl format by sampling first N lines.
+    Validate train.jsonl format using Pydantic models.
     Returns a list of error messages (empty if valid).
     """
+    from pydantic import ValidationError
+
     errors = []
+    EntryModel = models.TrainEntryRL if dataset_type == models.DatasetType.RL else models.TrainEntry
 
     try:
         with open(path, encoding="utf-8") as f:
             lines_checked = 0
             for line_num, line in enumerate(f, start=1):
-                # Skip empty lines
                 stripped = line.strip()
                 if not stripped:
                     continue
 
-                # Try to parse as JSON
                 try:
                     record = json.loads(stripped)
                 except json.JSONDecodeError as e:
@@ -405,63 +504,21 @@ def validate_train_jsonl(
                         return errors
                     continue
 
-                # Check it's a dict
-                if not isinstance(record, dict):
-                    errors.append(
-                        f"Line {line_num}: Expected JSON object, got {type(record).__name__}"
-                    )
+                try:
+                    EntryModel.model_validate(record)
+                except ValidationError as e:
+                    for err in e.errors():
+                        loc = ".".join(str(x) for x in err["loc"])
+                        errors.append(f"Line {line_num}: {loc} - {err['msg']}")
+                    if len(errors) >= 5:
+                        errors.append("... (stopping after 5 errors)")
+                        return errors
                     continue
-
-                # Check for required 'messages' field
-                if "messages" not in record:
-                    errors.append(f"Line {line_num}: Missing required 'messages' field")
-                    continue
-
-                messages = record["messages"]
-                if not isinstance(messages, list):
-                    errors.append(f"Line {line_num}: 'messages' must be a list")
-                    continue
-
-                if len(messages) == 0:
-                    errors.append(f"Line {line_num}: 'messages' list is empty")
-                    continue
-
-                # Check each message has role and content
-                for msg_idx, msg in enumerate(messages):
-                    if not isinstance(msg, dict):
-                        errors.append(f"Line {line_num}: Message {msg_idx + 1} must be an object")
-                        break
-                    if "role" not in msg:
-                        errors.append(f"Line {line_num}: Message {msg_idx + 1} missing 'role'")
-                        break
-                    if "content" not in msg:
-                        errors.append(f"Line {line_num}: Message {msg_idx + 1} missing 'content'")
-                        break
-                    if msg["role"] not in ("system", "user", "assistant"):
-                        errors.append(
-                            f"Line {line_num}: Message {msg_idx + 1} has invalid role '{msg['role']}' (expected: system, user, assistant)"
-                        )
-                        break
-
-                # For RL, check for rewards field
-                if dataset_type == models.DatasetType.RL and "rewards" not in record:
-                    errors.append(
-                        f"Line {line_num}: Missing required 'rewards' field for RL dataset"
-                    )
-
-                # Validate optional 'tools' field if present
-                if "tools" in record:
-                    tools = record["tools"]
-                    if not isinstance(tools, list):
-                        errors.append(f"Line {line_num}: 'tools' must be a list of tool names")
-                    elif not all(isinstance(t, str) for t in tools):
-                        errors.append(f"Line {line_num}: 'tools' must contain only strings")
 
                 lines_checked += 1
                 if lines_checked >= sample_size:
                     break
 
-            # Check if file was effectively empty (only whitespace)
             if lines_checked == 0:
                 errors.append("File contains no valid JSON lines")
 
@@ -469,38 +526,6 @@ def validate_train_jsonl(
         errors.append(f"Failed to read file: {e}")
 
     return errors
-
-
-def validate_docker_requires_mcp_url(path: Path, config: models.ProjectConfig) -> str | None:
-    """
-    Validate that if any row in train.jsonl has 'docker' field, config must have mcp_url.
-    Returns error message if invalid, None if valid.
-    """
-    try:
-        with open(path, encoding="utf-8") as f:
-            for line_num, line in enumerate(f, start=1):
-                stripped = line.strip()
-                if not stripped:
-                    continue
-                try:
-                    record = json.loads(stripped)
-                    if record.get("docker"):
-                        # Found docker field - check if mcp_url is configured
-                        has_mcp_url = config.rollout and config.rollout.mcp_url
-                        if not has_mcp_url:
-                            return (
-                                f"Line {line_num} has 'docker' field but config.yml has no 'mcp_url'. "
-                                "You must specify the MCP server URL your Docker image exposes. "
-                                "Add to config.yml:\n\n"
-                                "rollout:\n"
-                                "  mcp_url: http://localhost:8000  # port your MCP server listens on"
-                            )
-                        return None  # Valid - has both docker and mcp_url
-                except json.JSONDecodeError:
-                    continue
-    except Exception:
-        pass
-    return None
 
 
 from functools import lru_cache
@@ -1064,6 +1089,7 @@ def orgs(ctx, org_id: str | None):
             "deepseek-aha",
             "tutorial-reward",
             "tutorial-tool",
+            "swe-bench-live",
         ]
     ),
     default="start",
@@ -1101,6 +1127,7 @@ def init(template: str, name: str):
         "tutorial-reward": "tutorial-reward",
         "tutorial-tool": "tutorial-tool",
         "deepseek-aha": "deepseek-aha",
+        "swe-bench-live": "swe-bench-live",
         "new": "new-project",
         "blank": "my-project",
     }
@@ -1383,10 +1410,14 @@ def _submit_single_run(
         if jsonl_errors:
             raise click.ClickException(f"Invalid train.jsonl: {jsonl_errors[0]}")
 
-        # Validate docker + mcp_url requirement
-        docker_error = validate_docker_requires_mcp_url(train_jsonl_path, config)
-        if docker_error:
-            raise click.ClickException(docker_error)
+        # Validate sandbox=True functions require docker field in train.jsonl
+        sandbox_errors = validate_sandbox_docker_requirement(
+            train_jsonl_path,
+            rewards_py_path=dir / "rewards.py",
+            env_py_path=dir / "env.py",
+        )
+        if sandbox_errors:
+            raise click.ClickException(f"Sandbox validation: {sandbox_errors[0]}")
 
     # Validate rewards.py if present
     if config.dataset_type == models.DatasetType.RL:

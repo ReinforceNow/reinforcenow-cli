@@ -14,7 +14,7 @@ name = "rnow"
 version = "0.3.1"
 description = "ReinforceNow CLI - Reinforcement Learning platform command-line interface"
 readme = "README.md"
-requires-python = ">=3.11,<3.15"
+requires-python = ">=3.10,<3.15"
 dependencies = [
     # Core CLI deps - lightweight, cross-platform
     "click>=8.0.0",
@@ -31,13 +31,16 @@ dependencies = [
 
 [project.optional-dependencies]
 # Local testing with ML inference (requires torch)
-test = ["tinker-cookbook>=0.1.0"]
+test = [
+    "tinker-cookbook>=0.1.0",
+    "transformers>=4.40.0",  # Ensure modern version (2.x is incompatible)
+]
 # API server mode
 api = ["fastapi>=0.68.0", "uvicorn>=0.15.0"]
 # MCP server support (for fetching tool schemas)
 mcp = ["fastmcp>=0.1.0"]
 # All optional features
-all = ["tinker-cookbook>=0.1.0", "fastapi>=0.68.0", "uvicorn>=0.15.0", "fastmcp>=0.1.0"]
+all = ["tinker-cookbook>=0.1.0", "transformers>=4.40.0", "fastapi>=0.68.0", "uvicorn>=0.15.0", "fastmcp>=0.1.0"]
 
 [project.scripts]
 rnow = "rnow.cli.main:main"

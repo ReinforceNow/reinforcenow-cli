@@ -1,0 +1,27 @@
+project_id: ""
+project_name: "SWE-bench Live - Issue Resolution Agent"
+dataset_id: ""
+dataset_name: "swe-bench-live"
+dataset_type: rl
+organization_id: ""
+data:
+  train_file: train.jsonl
+  batch_size: 4
+  group_size: 4
+model:
+  path: Qwen/Qwen3-8B
+  qlora_rank: 32
+  name: "SWE-bench Agent"
+  description: "Multi-turn RL agent trained on SWE-bench-Live issue resolution tasks"
+algorithm:
+  loss_fn: ppo
+  adv_estimator: grpo
+  kl_penalty_coef: 0.01
+rollout:
+  max_turns: 30
+  max_tokens: 8192
+  termination_policy: last_tool
+trainer:
+  num_epochs: 2
+  learning_rate: 5e-5
+  save_step: 50
