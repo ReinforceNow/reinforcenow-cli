@@ -1,0 +1,3 @@
+# Playwright is pre-installed in the Docker image
+# Add any additional dependencies here
+httpx

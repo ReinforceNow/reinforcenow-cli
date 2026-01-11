@@ -221,18 +221,18 @@ def validate_max_tokens_for_context(
     return None, available
 
 
-def get_tools_from_env_py(env_path: Path) -> list[dict]:
+def get_tools_from_tools_py(tools_path: Path) -> list[dict]:
     """
-    Extract tool definitions from env.py as structured data.
+    Extract tool definitions from tools.py as structured data.
     Returns list of tool dicts with name, description, and schema.
     """
     import ast
 
-    if not env_path.exists():
+    if not tools_path.exists():
         return []
 
     try:
-        source = env_path.read_text()
+        source = tools_path.read_text()
         tree = ast.parse(source)
     except (SyntaxError, OSError):
         return []
@@ -377,25 +377,124 @@ def fetch_mcp_tool_schemas(
     return all_tools, None
 
 
+def get_sandbox_names_from_file(filepath: Path, decorator_name: str) -> set[str]:
+    """
+    Extract function names with sandbox=True from a file.
+
+    Args:
+        filepath: Path to rewards.py or tools.py
+        decorator_name: "reward" or "tool"
+
+    Returns:
+        Set of function names that have sandbox=True
+    """
+    import ast
+
+    names = set()
+    if not filepath.exists():
+        return names
+
+    try:
+        source = filepath.read_text()
+        tree = ast.parse(source, filename=str(filepath))
+    except SyntaxError:
+        return names
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            for decorator in node.decorator_list:
+                # Check for @decorator_name(sandbox=True)
+                if (
+                    isinstance(decorator, ast.Call)
+                    and isinstance(decorator.func, ast.Name)
+                    and decorator.func.id == decorator_name
+                ):
+                    for kw in decorator.keywords:
+                        if kw.arg == "sandbox":
+                            # Check if value is True
+                            if isinstance(kw.value, ast.Constant) and kw.value.value is True:
+                                names.add(node.name)
+                            elif isinstance(kw.value, ast.NameConstant) and kw.value.value is True:
+                                names.add(node.name)  # Python 3.7 compat
+    return names
+
+
+def validate_sandbox_docker_requirement(
+    train_jsonl_path: Path, rewards_py_path: Path, tools_py_path: Path
+) -> list[str]:
+    """
+    Validate that entries using sandbox=True tools/rewards have a docker field.
+
+    Returns:
+        List of error messages (empty if valid)
+    """
+    errors = []
+
+    # Get sandbox function names
+    sandbox_rewards = get_sandbox_names_from_file(rewards_py_path, "reward")
+    sandbox_tools = get_sandbox_names_from_file(tools_py_path, "tool")
+
+    if not sandbox_rewards and not sandbox_tools:
+        return []  # No sandbox functions, nothing to validate
+
+    try:
+        with open(train_jsonl_path, encoding="utf-8") as f:
+            for line_num, line in enumerate(f, start=1):
+                stripped = line.strip()
+                if not stripped:
+                    continue
+
+                try:
+                    record = json.loads(stripped)
+                except json.JSONDecodeError:
+                    continue
+
+                # Check if entry references sandbox rewards/tools
+                entry_rewards = set(record.get("rewards", []))
+                entry_tools = set(record.get("tools", []))
+
+                uses_sandbox_reward = bool(sandbox_rewards & entry_rewards)
+                uses_sandbox_tool = bool(sandbox_tools & entry_tools)
+
+                if (uses_sandbox_reward or uses_sandbox_tool) and not record.get("docker"):
+                    used = []
+                    if uses_sandbox_reward:
+                        used.extend(f"reward:{r}" for r in sandbox_rewards & entry_rewards)
+                    if uses_sandbox_tool:
+                        used.extend(f"tool:{t}" for t in sandbox_tools & entry_tools)
+                    errors.append(
+                        f"Line {line_num}: Uses sandbox functions ({', '.join(used)}) but missing 'docker' field"
+                    )
+                    if len(errors) >= 5:
+                        errors.append("... (stopping after 5 errors)")
+                        return errors
+
+    except Exception as e:
+        errors.append(f"Failed to validate sandbox requirements: {e}")
+
+    return errors
+
+
 def validate_train_jsonl(
     path: Path, dataset_type: models.DatasetType, sample_size: int = 50
 ) -> list[str]:
     """
-    Validate train.jsonl format by sampling first N lines.
+    Validate train.jsonl format using Pydantic models.
     Returns a list of error messages (empty if valid).
     """
+    from pydantic import ValidationError
+
     errors = []
+    EntryModel = models.TrainEntryRL if dataset_type == models.DatasetType.RL else models.TrainEntry
 
     try:
         with open(path, encoding="utf-8") as f:
             lines_checked = 0
             for line_num, line in enumerate(f, start=1):
-                # Skip empty lines
                 stripped = line.strip()
                 if not stripped:
                     continue
 
-                # Try to parse as JSON
                 try:
                     record = json.loads(stripped)
                 except json.JSONDecodeError as e:
@@ -405,63 +504,21 @@ def validate_train_jsonl(
                         return errors
                     continue
 
-                # Check it's a dict
-                if not isinstance(record, dict):
-                    errors.append(
-                        f"Line {line_num}: Expected JSON object, got {type(record).__name__}"
-                    )
+                try:
+                    EntryModel.model_validate(record)
+                except ValidationError as e:
+                    for err in e.errors():
+                        loc = ".".join(str(x) for x in err["loc"])
+                        errors.append(f"Line {line_num}: {loc} - {err['msg']}")
+                    if len(errors) >= 5:
+                        errors.append("... (stopping after 5 errors)")
+                        return errors
                     continue
-
-                # Check for required 'messages' field
-                if "messages" not in record:
-                    errors.append(f"Line {line_num}: Missing required 'messages' field")
-                    continue
-
-                messages = record["messages"]
-                if not isinstance(messages, list):
-                    errors.append(f"Line {line_num}: 'messages' must be a list")
-                    continue
-
-                if len(messages) == 0:
-                    errors.append(f"Line {line_num}: 'messages' list is empty")
-                    continue
-
-                # Check each message has role and content
-                for msg_idx, msg in enumerate(messages):
-                    if not isinstance(msg, dict):
-                        errors.append(f"Line {line_num}: Message {msg_idx + 1} must be an object")
-                        break
-                    if "role" not in msg:
-                        errors.append(f"Line {line_num}: Message {msg_idx + 1} missing 'role'")
-                        break
-                    if "content" not in msg:
-                        errors.append(f"Line {line_num}: Message {msg_idx + 1} missing 'content'")
-                        break
-                    if msg["role"] not in ("system", "user", "assistant"):
-                        errors.append(
-                            f"Line {line_num}: Message {msg_idx + 1} has invalid role '{msg['role']}' (expected: system, user, assistant)"
-                        )
-                        break
-
-                # For RL, check for rewards field
-                if dataset_type == models.DatasetType.RL and "rewards" not in record:
-                    errors.append(
-                        f"Line {line_num}: Missing required 'rewards' field for RL dataset"
-                    )
-
-                # Validate optional 'tools' field if present
-                if "tools" in record:
-                    tools = record["tools"]
-                    if not isinstance(tools, list):
-                        errors.append(f"Line {line_num}: 'tools' must be a list of tool names")
-                    elif not all(isinstance(t, str) for t in tools):
-                        errors.append(f"Line {line_num}: 'tools' must contain only strings")
 
                 lines_checked += 1
                 if lines_checked >= sample_size:
                     break
 
-            # Check if file was effectively empty (only whitespace)
             if lines_checked == 0:
                 errors.append("File contains no valid JSON lines")
 
@@ -469,38 +526,6 @@ def validate_train_jsonl(
         errors.append(f"Failed to read file: {e}")
 
     return errors
-
-
-def validate_docker_requires_mcp_url(path: Path, config: models.ProjectConfig) -> str | None:
-    """
-    Validate that if any row in train.jsonl has 'docker' field, config must have mcp_url.
-    Returns error message if invalid, None if valid.
-    """
-    try:
-        with open(path, encoding="utf-8") as f:
-            for line_num, line in enumerate(f, start=1):
-                stripped = line.strip()
-                if not stripped:
-                    continue
-                try:
-                    record = json.loads(stripped)
-                    if record.get("docker"):
-                        # Found docker field - check if mcp_url is configured
-                        has_mcp_url = config.rollout and config.rollout.mcp_url
-                        if not has_mcp_url:
-                            return (
-                                f"Line {line_num} has 'docker' field but config.yml has no 'mcp_url'. "
-                                "You must specify the MCP server URL your Docker image exposes. "
-                                "Add to config.yml:\n\n"
-                                "rollout:\n"
-                                "  mcp_url: http://localhost:8000  # port your MCP server listens on"
-                            )
-                        return None  # Valid - has both docker and mcp_url
-                except json.JSONDecodeError:
-                    continue
-    except Exception:
-        pass
-    return None
 
 
 from functools import lru_cache
@@ -1064,6 +1089,7 @@ def orgs(ctx, org_id: str | None):
             "deepseek-aha",
             "tutorial-reward",
             "tutorial-tool",
+            "web-tasks",
         ]
     ),
     default="start",
@@ -1101,6 +1127,7 @@ def init(template: str, name: str):
         "tutorial-reward": "tutorial-reward",
         "tutorial-tool": "tutorial-tool",
         "deepseek-aha": "deepseek-aha",
+        "web-tasks": "web-tasks",
         "new": "new-project",
         "blank": "my-project",
     }
@@ -1131,7 +1158,7 @@ def init(template: str, name: str):
                 "train.jsonl",
                 "rewards.py",
                 "requirements.txt",
-                "env.py",
+                "tools.py",
                 "README.md",
             }
 
@@ -1245,7 +1272,7 @@ def init(template: str, name: str):
     click.echo(click.style("Next steps:", bold=True))
     click.echo(f"  1. Edit {click.style('train.jsonl', underline=True)} with your training data")
     click.echo(
-        f"  2. Edit {click.style('rewards.py', underline=True)} and {click.style('env.py', underline=True)} with your reward and tool functions"
+        f"  2. Edit {click.style('rewards.py', underline=True)} and {click.style('tools.py', underline=True)} with your reward and tool functions"
     )
     click.echo(f"  3. Run {click.style('rnow run', fg=TEAL_RGB, bold=True)} to start training")
 
@@ -1383,10 +1410,14 @@ def _submit_single_run(
         if jsonl_errors:
             raise click.ClickException(f"Invalid train.jsonl: {jsonl_errors[0]}")
 
-        # Validate docker + mcp_url requirement
-        docker_error = validate_docker_requires_mcp_url(train_jsonl_path, config)
-        if docker_error:
-            raise click.ClickException(docker_error)
+        # Validate sandbox=True functions require docker field in train.jsonl
+        sandbox_errors = validate_sandbox_docker_requirement(
+            train_jsonl_path,
+            rewards_py_path=dir / "rewards.py",
+            tools_py_path=dir / "tools.py",
+        )
+        if sandbox_errors:
+            raise click.ClickException(f"Sandbox validation: {sandbox_errors[0]}")
 
     # Validate rewards.py if present
     if config.dataset_type == models.DatasetType.RL:
@@ -1415,10 +1446,10 @@ def _submit_single_run(
             # Collect all tools
             all_tools = []
 
-            # Get tools from env.py
-            env_path = dir / "env.py"
-            env_tools = get_tools_from_env_py(env_path)
-            all_tools.extend(env_tools)
+            # Get tools from tools.py
+            tools_path = dir / "tools.py"
+            tools_py_tools = get_tools_from_tools_py(tools_path)
+            all_tools.extend(tools_py_tools)
 
             # Fetch MCP tools
             mcp_urls = config.rollout.mcp_url
@@ -1484,7 +1515,7 @@ def _submit_single_run(
         )
 
     # Add optional files
-    optional_files = {"env.py": dir / "env.py", "requirements.txt": dir / "requirements.txt"}
+    optional_files = {"tools.py": dir / "tools.py", "requirements.txt": dir / "requirements.txt"}
     for file_name, path in optional_files.items():
         if path.exists():
             files.append(
@@ -1769,6 +1800,36 @@ def run(
     if not config.organization_id:
         config.organization_id = get_active_organization()
 
+    # Load secrets from .env file if it exists
+    secret_values = {}
+    env_file = dir / ".env"
+    if env_file.exists():
+        try:
+            with open(env_file) as f:
+                for line in f:
+                    line = line.strip()
+                    # Skip empty lines and comments
+                    if not line or line.startswith("#"):
+                        continue
+                    # Parse KEY=value format
+                    if "=" in line:
+                        key, _, value = line.partition("=")
+                        key = key.strip()
+                        value = value.strip()
+                        # Remove quotes if present
+                        if (value.startswith('"') and value.endswith('"')) or (
+                            value.startswith("'") and value.endswith("'")
+                        ):
+                            value = value[1:-1]
+                        secret_values[key] = value
+
+            if secret_values:
+                click.echo(
+                    click.style(f"🔐 Loaded {len(secret_values)} secret(s) from .env", dim=True)
+                )
+        except Exception as e:
+            click.echo(click.style(f"⚠️  Warning: Failed to read .env file: {e}", fg="yellow"))
+
     # Validate required files (all in the same directory now)
     required_files = {
         "train.jsonl": dir / "train.jsonl",
@@ -1844,10 +1905,10 @@ def run(
             # Collect all tools
             all_tools = []
 
-            # Get tools from env.py
-            env_path = dir / "env.py"
-            env_tools = get_tools_from_env_py(env_path)
-            all_tools.extend(env_tools)
+            # Get tools from tools.py
+            tools_path = dir / "tools.py"
+            tools_py_tools = get_tools_from_tools_py(tools_path)
+            all_tools.extend(tools_py_tools)
 
             # Fetch MCP tool schemas (with progress indicator)
             mcp_urls = config.rollout.mcp_url if config.rollout else None
@@ -1962,19 +2023,19 @@ def run(
                     "Please ensure reward names in train.jsonl match functions in rewards.py"
                 )
 
-    # Validate env.py if present (check for docstrings on @tool functions)
-    env_path = dir / "env.py"
-    has_env_py = env_path.exists() and env_path.stat().st_size > 0
-    if has_env_py:
+    # Validate tools.py if present (check for docstrings on @tool functions)
+    tools_path = dir / "tools.py"
+    has_tools_py = tools_path.exists() and tools_path.stat().st_size > 0
+    if has_tools_py:
         try:
             from rnow.core.tool import validate_tools_file
 
-            errors = validate_tools_file(env_path)
+            errors = validate_tools_file(tools_path)
             if errors:
-                click.echo(click.style("✗ Invalid env.py:", fg="red", bold=True))
+                click.echo(click.style("✗ Invalid tools.py:", fg="red", bold=True))
                 for err in errors:
                     click.echo(f"  • {err}")
-                raise click.ClickException("Please fix env.py before submitting")
+                raise click.ClickException("Please fix tools.py before submitting")
         except ImportError:
             pass  # Skip validation if module not available
 
@@ -1986,7 +2047,7 @@ def run(
         mcp_url_count = len(mcp_url) if isinstance(mcp_url, list) else 1
 
     # Validate tool support for the model
-    has_tools = has_env_py or has_mcp_url
+    has_tools = has_tools_py or has_mcp_url
     if has_tools and not models.supports_tool_calling(model_path):
         click.echo()
         click.echo(click.style("✗ Model does not support tool calling", fg="red", bold=True))
@@ -1998,7 +2059,7 @@ def run(
             click.echo("  Base/non-instruct models use a format that doesn't support tools.")
         click.echo()
         click.echo(click.style("  Options:", bold=True))
-        click.echo("  1. Remove env.py and mcp_url from your project")
+        click.echo("  1. Remove tools.py and mcp_url from your project")
         click.echo(
             "  2. Use a model that supports tools (e.g., Qwen/Qwen3-8B, meta-llama/Llama-3.1-8B-Instruct)"
         )
@@ -2006,16 +2067,16 @@ def run(
         raise click.ClickException("Model does not support tool calling")
 
     # Show tool sources message
-    if has_env_py and has_mcp_url:
+    if has_tools_py and has_mcp_url:
         server_text = f"{mcp_url_count} server(s)" if mcp_url_count > 1 else "1 server"
         click.echo(
-            click.style("Tools: ", fg=TEAL_RGB) + f"Using MCP ({server_text}) and env.py tools"
+            click.style("Tools: ", fg=TEAL_RGB) + f"Using MCP ({server_text}) and tools.py tools"
         )
     elif has_mcp_url:
         server_text = f"{mcp_url_count} server(s)" if mcp_url_count > 1 else "1 server"
         click.echo(click.style("Tools: ", fg=TEAL_RGB) + f"Using MCP ({server_text})")
-    elif has_env_py:
-        click.echo(click.style("Tools: ", fg=TEAL_RGB) + "Using env.py tools")
+    elif has_tools_py:
+        click.echo(click.style("Tools: ", fg=TEAL_RGB) + "Using tools.py tools")
 
     # Start cube spinner early
     spinner = CubeSpinner()
@@ -2059,7 +2120,7 @@ def run(
 
     # Add optional files (all in the same directory now)
     optional_files = {
-        "env.py": dir / "env.py",
+        "tools.py": dir / "tools.py",
         "requirements.txt": dir / "requirements.txt",
     }
 
@@ -2092,6 +2153,10 @@ def run(
     # Add debug flag if set
     if debug:
         submit_data["debug"] = "true"
+
+    # Add secrets if provided (sent as JSON string)
+    if secret_values:
+        submit_data["secrets"] = json.dumps(secret_values)
 
     # Start cube spinner if not already running (for small files)
     if not spinner.running:

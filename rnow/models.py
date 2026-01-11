@@ -10,6 +10,8 @@ Trainer-internal types (Env, StepResult, Observation) live in docker/trainer/
 where tinker is available.
 """
 
+from __future__ import annotations
+
 from enum import Enum
 from typing import Literal
 
@@ -62,9 +64,49 @@ class RewardArgs(BaseModel):
 
     metadata: dict = Field(default_factory=dict)
     variables: dict = Field(default_factory=dict)
+    secrets: dict = Field(
+        default_factory=dict
+    )  # User-defined secrets from .env file or project settings
 
     class Config:
         arbitrary_types_allowed = True
+
+
+# --- train.jsonl validation models ---
+
+
+class Message(BaseModel):
+    """A single message in a conversation."""
+
+    model_config = ConfigDict(extra="allow")  # Allow extra fields like tool_calls
+
+    role: Literal["system", "user", "assistant", "tool"]
+    content: str
+
+
+class TrainEntry(BaseModel):
+    """A single entry in train.jsonl."""
+
+    model_config = ConfigDict(extra="allow")  # Allow extra fields like variables, metadata
+
+    messages: list[Message] = Field(..., min_length=1)
+    rewards: list[str] | None = None  # Required for RL, optional for SFT
+    tools: list[str] | None = None  # Optional: filter which tools are available
+    docker: str | None = None  # Optional: Docker image for Modal sandbox
+    metadata: dict | None = None
+    variables: dict | None = None
+
+    @model_validator(mode="after")
+    def validate_messages_not_empty(self):
+        if not self.messages:
+            raise ValueError("messages list cannot be empty")
+        return self
+
+
+class TrainEntryRL(TrainEntry):
+    """Train entry for RL datasets - rewards field is required."""
+
+    rewards: list[str] = Field(..., min_length=1)
 
 
 class DeviceCode(BaseModel):
@@ -260,7 +302,7 @@ class RolloutConfig(BaseModel):
     )
     mcp_url: str | list[str] | None = Field(
         default=None,
-        description="MCP server URL(s) for tools. Can be a single URL or a list of URLs. Can be used alongside env.py to combine both tool sources.",
+        description="MCP server URL(s) for tools. Can be a single URL or a list of URLs. Can be used alongside tools.py to combine both tool sources.",
     )
     max_tool_response_chars: int | None = Field(
         default=4000,

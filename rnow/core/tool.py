@@ -430,7 +430,7 @@ def tool(fn: Callable = None, *, sandbox: bool = False) -> Callable:
 
 def validate_tools_file(filepath) -> list:
     """
-    Validate an env.py file without executing it.
+    Validate a tools.py file without executing it.
 
     Parses the AST to find @tool decorated functions and checks:
     - Function has a non-empty docstring
