@@ -267,7 +267,7 @@ async def _run_single_rollout(
 @click.option(
     "--debug",
     is_flag=True,
-    help="Use local Docker image instead of Modal (for testing local changes)",
+    help="Use debug trainer image from Docker Hub (for testing trainer changes)",
 )
 @click.option(
     "--output-dir",
