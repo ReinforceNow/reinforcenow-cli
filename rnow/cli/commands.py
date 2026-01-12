@@ -1528,6 +1528,7 @@ def _submit_single_run(
     # Add Dockerfile.* files for local/ docker images
     for dockerfile_path in dir.glob("Dockerfile.*"):
         file_name = dockerfile_path.name
+        click.echo(f"  Found Dockerfile: {file_name}")
         files.append(
             (
                 file_name.replace(".", "_"),
@@ -2142,6 +2143,17 @@ def run(
                     (file_name, open(path, "rb"), "application/octet-stream"),
                 )
             )
+
+    # Add Dockerfile.* files for local/ docker images
+    for dockerfile_path in dir.glob("Dockerfile.*"):
+        file_name = dockerfile_path.name
+        click.echo(f"  Found Dockerfile: {file_name}")
+        files.append(
+            (
+                file_name.replace(".", "_"),
+                (file_name, open(dockerfile_path, "rb"), "application/octet-stream"),
+            )
+        )
 
     # For multipart, we need to omit Content-Type so requests sets the boundary
     headers = auth.get_auth_headers()
