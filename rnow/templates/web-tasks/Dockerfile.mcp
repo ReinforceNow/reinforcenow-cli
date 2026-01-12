@@ -1,15 +1,4 @@
 # MCP Playwright with HTTP transport enabled
-# This image auto-starts the MCP server on port 8931
 FROM mcp/playwright
 
-# Fix DNS resolution in Modal sandbox
-RUN echo "nameserver 8.8.8.8" > /etc/resolv.conf && \
-    echo "nameserver 8.8.4.4" >> /etc/resolv.conf
-
-EXPOSE 8931
-
-# Enable HTTP transport mode for Modal tunnels
-# --port 8931: HTTP/SSE transport on this port
-# --host 0.0.0.0: bind to all interfaces (required for Modal tunnels)
-# --allowed-hosts "*": disable DNS rebinding protection (required for Modal tunnels)
 ENTRYPOINT ["node", "cli.js", "--headless", "--browser", "chromium", "--no-sandbox", "--port", "8931", "--host", "0.0.0.0", "--allowed-hosts", "*"]
