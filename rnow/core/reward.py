@@ -135,7 +135,13 @@ def _validate_reward_signature(func: Callable) -> None:
         raise TypeError(f"Reward '{func.__name__}' must return 'float', got '{return_type}'.")
 
 
-def reward(fn: Callable = None, *, precondition: bool = False, sandbox: bool = False) -> Callable:
+def reward(
+    fn: Callable = None,
+    *,
+    precondition: bool = False,
+    sandbox: bool = False,
+    timeout: int = 60,
+) -> Callable:
     """
     Decorator to register reward functions with validation.
 
@@ -158,7 +164,7 @@ def reward(fn: Callable = None, *, precondition: bool = False, sandbox: bool = F
             # If this returns 1, total reward is 1 + sum(other rewards)
             return 1.0 if valid_format else 0.0
 
-        @reward(sandbox=True)  # Run inside Docker sandbox
+        @reward(sandbox=True, timeout=120)  # Run inside Docker sandbox with 2min timeout
         def test_code(args: RewardArgs, messages: list) -> float:
             # This executes inside the sandbox container
             # Has access to files created by LLM, can run pytest, etc.
@@ -175,6 +181,9 @@ def reward(fn: Callable = None, *, precondition: bool = False, sandbox: bool = F
             - Access files created during LLM interaction
             - Run tests (pytest, etc.)
             - Execute code in the same environment as tools
+        timeout: Timeout in seconds for this reward function (default: 60).
+            If the reward times out, it returns a special "timeout" status
+            instead of a numeric value.
     """
 
     def decorator(func):
@@ -199,6 +208,7 @@ def reward(fn: Callable = None, *, precondition: bool = False, sandbox: bool = F
         func._reward_name = func.__name__
         func._is_precondition = precondition
         func._is_sandbox = sandbox
+        func._timeout = timeout
 
         # Register the function
         REWARD_REGISTRY[func.__name__] = func

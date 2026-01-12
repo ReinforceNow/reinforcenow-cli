@@ -340,7 +340,7 @@ def _try_coerce(value: Any, expected_types: list[str]) -> tuple[bool, Any]:
     return False, value
 
 
-def tool(fn: Callable = None, *, sandbox: bool = False) -> Callable:
+def tool(fn: Callable = None, *, sandbox: bool = False, timeout: int = 60) -> Callable:
     """
     Decorator to register tool functions with robust validation.
 
@@ -359,7 +359,7 @@ def tool(fn: Callable = None, *, sandbox: bool = False) -> Callable:
             '''Search the web.'''
             return requests.get(...).json()
 
-        @tool(sandbox=True)  # Run inside Docker sandbox
+        @tool(sandbox=True, timeout=120)  # Run inside Docker sandbox with 2min timeout
         def run_python(code: str) -> str:
             '''Execute Python code in isolated environment.'''
             import subprocess
@@ -380,6 +380,8 @@ def tool(fn: Callable = None, *, sandbox: bool = False) -> Callable:
             - Execute code in an isolated environment
             - Create/modify files that sandbox rewards can check
             - Access custom dependencies installed in the Docker image
+        timeout: Timeout in seconds for this tool function (default: 60).
+            If the tool times out, it returns a timeout error message.
     """
 
     def decorator(func: Callable) -> Callable:
@@ -419,6 +421,7 @@ def tool(fn: Callable = None, *, sandbox: bool = False) -> Callable:
         func._schema = schema
         func._description = doc  # Already validated and stripped above
         func._is_sandbox = sandbox
+        func._timeout = timeout
 
         TOOL_REGISTRY[func._tool_name] = func
 

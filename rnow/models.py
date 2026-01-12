@@ -92,7 +92,7 @@ class TrainEntry(BaseModel):
     messages: list[Message] = Field(..., min_length=1)
     rewards: list[str] | None = None  # Required for RL, optional for SFT
     tools: list[str] | None = None  # Optional: filter which tools are available
-    docker: str | None = None  # Optional: Docker image for Modal sandbox
+    docker: str | None = None  # Optional: Docker image for isolated sandbox
     metadata: dict | None = None
     variables: dict | None = None
 
@@ -303,6 +303,11 @@ class RolloutConfig(BaseModel):
     mcp_url: str | list[str] | None = Field(
         default=None,
         description="MCP server URL(s) for tools. Can be a single URL or a list of URLs. Can be used alongside tools.py to combine both tool sources.",
+    )
+    tool_timeout: int = Field(
+        default=60,
+        gt=0,
+        description="Timeout in seconds for tool calls. Browser automation may need longer timeouts (default: 60s).",
     )
     max_tool_response_chars: int | None = Field(
         default=4000,

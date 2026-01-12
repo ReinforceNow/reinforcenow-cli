@@ -2,7 +2,7 @@
 """
 Test command for running RL rollouts via API.
 
-Uses the /api/rnow/rollout endpoint which runs rollouts in Modal sandbox.
+Uses the /api/rnow/rollout endpoint which runs rollouts on Cloud Run.
 
 Modes:
 - Default: Uses tinker models (requires auth)
@@ -678,14 +678,6 @@ async def _test_async(
         thinking_display = get_thinking_mode_display(config)
         click.echo(f"Model: {model_name} ({click.style(thinking_display, fg=TEAL_RGB)})")
 
-    # Display MCP info if configured
-    if mcp_url:
-        if isinstance(mcp_url, list):
-            click.echo(f"MCP: {len(mcp_url)} server(s)")
-        elif mcp_url.startswith("docker://"):
-            click.echo(f"MCP: {click.style(mcp_url, fg='cyan')} (Modal sandbox)")
-        else:
-            click.echo(f"MCP: {mcp_url}")
     click.echo()
 
     try:
