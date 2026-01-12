@@ -87,8 +87,7 @@ class RolloutClient:
     """
     Client for running rollouts via the /api/rnow/rollout endpoint.
 
-    Uses the same tools.py rollout logic as production training,
-    ensuring single source of truth.
+    Uses async polling: POST starts job, GET polls for results.
     """
 
     def __init__(
@@ -115,23 +114,21 @@ class RolloutClient:
         self.openai_api_key = openai_api_key
         self.mcp_url = mcp_url
         self.auth_headers = get_auth_headers()
-        self.client = httpx.AsyncClient(timeout=3600.0)  # 60 min for batch rollouts
+        self.client = httpx.AsyncClient(timeout=60.0)
         self.total_charged_dollars = 0.0
 
-    async def run_batch_rollouts(
+    async def start_rollout(
         self,
         samples: list[dict],
         tools_py_code: str | None = None,
         rewards_py_code: str | None = None,
-    ) -> list[dict]:
+    ) -> str:
         """
-        Run multiple rollouts in parallel via a single API call.
-
-        Uses one sampler (policy) for all rollouts, running them
-        concurrently with asyncio.gather on the server side.
+        Start rollouts and return rollout ID immediately.
+        Use poll_rollout() to check for results.
         """
         payload = {
-            "samples": samples,  # Batch mode
+            "samples": samples,
             "model": self.model,
             "max_tokens": self.max_tokens,
             "temperature": self.temperature,
@@ -142,11 +139,9 @@ class RolloutClient:
             "debug": self.debug,
         }
 
-        # Add MCP URL if configured
         if self.mcp_url:
             payload["mcp_url"] = self.mcp_url
 
-        # Smoke test mode: use OpenAI instead of tinker
         if self.smoke_test:
             payload["smoke_test"] = True
             payload["openai_api_key"] = self.openai_api_key
@@ -162,14 +157,72 @@ class RolloutClient:
         if "error" in data:
             raise Exception(f"API error: {data.get('detail', data.get('error'))}")
 
-        # Track billing
-        if "billing" in data:
-            billing = data["billing"]
-            tokens = billing.get("prompt_tokens", 0) + billing.get("completion_tokens", 0)
-            self.total_charged_dollars += tokens * 0.000001
+        return data["rollout_id"]
 
-        # Return results array
-        return data.get("results", [data])  # Fallback to single result for backwards compat
+    async def poll_rollout(self, rollout_id: str) -> dict:
+        """Poll for rollout status. Returns dict with 'status' field."""
+        resp = await self.client.get(
+            f"{self.api_base}/api/rnow/rollout",
+            params={"id": rollout_id},
+            headers=self.auth_headers,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    async def run_batch_rollouts(
+        self,
+        samples: list[dict],
+        tools_py_code: str | None = None,
+        rewards_py_code: str | None = None,
+        spinner: Spinner | None = None,
+        timeout_minutes: int = 30,
+    ) -> tuple[str, list[dict]]:
+        """
+        Run rollouts with exponential backoff polling.
+        Returns (rollout_id, results).
+        """
+        # Start the rollout
+        rollout_id = await self.start_rollout(samples, tools_py_code, rewards_py_code)
+
+        if spinner:
+            spinner.update(f"Running rollouts... (ID: {rollout_id[:8]})")
+
+        # Poll with exponential backoff
+        poll_interval = 2.0  # Start at 2 seconds
+        max_interval = 10.0  # Cap at 10 seconds
+        timeout = timeout_minutes * 60
+        start_time = time.time()
+
+        while time.time() - start_time < timeout:
+            if _shutdown_requested:
+                raise asyncio.CancelledError()
+
+            # Add jitter (±20%)
+            jitter = poll_interval * 0.2 * (random.random() * 2 - 1)
+            await asyncio.sleep(poll_interval + jitter)
+
+            result = await self.poll_rollout(rollout_id)
+            status = result.get("status")
+
+            if status == "completed":
+                # Track billing
+                if "billing" in result:
+                    billing = result["billing"]
+                    tokens = billing.get("prompt_tokens", 0) + billing.get("completion_tokens", 0)
+                    self.total_charged_dollars += tokens * 0.000001
+                return rollout_id, result.get("results", [])
+
+            if status == "failed":
+                raise Exception(f"Rollout failed: {result.get('error', 'Unknown error')}")
+
+            # Exponential backoff
+            poll_interval = min(poll_interval * 1.5, max_interval)
+
+            if spinner:
+                elapsed = int(time.time() - start_time)
+                spinner.update(f"Running rollouts... ({elapsed}s, ID: {rollout_id[:8]})")
+
+        raise TimeoutError(f"Rollout timed out after {timeout_minutes} minutes")
 
     async def close(self):
         await self.client.aclose()
@@ -224,7 +277,7 @@ async def _run_single_rollout(
 @click.option(
     "--num-rollouts",
     "-n",
-    default=3,
+    default=1,
     show_default=True,
     help="Number of rollouts to run",
 )
@@ -282,6 +335,31 @@ async def _run_single_rollout(
     is_flag=True,
     help="Use OpenAI gpt-5-nano instead of tinker (requires OPENAI_API_KEY env var)",
 )
+@click.option(
+    "--id",
+    "rollout_id",
+    default=None,
+    help="Fetch results for an existing rollout ID (skip running new rollout)",
+)
+@click.option(
+    "--store",
+    is_flag=True,
+    help="Store rollout ID in ./rollouts/<id>.txt for later retrieval",
+)
+@click.option(
+    "--timeout",
+    default=60,
+    show_default=True,
+    help="Timeout in minutes for polling results",
+)
+@click.option(
+    "--entry",
+    "-e",
+    "entries",
+    default=None,
+    help="Entry indices from train.jsonl (0-indexed). Examples: -e 5, -e 0,2,5, -e 0 -e 2 -e 5",
+    multiple=True,
+)
 @click.pass_context
 def test(
     ctx,
@@ -296,23 +374,43 @@ def test(
     debug,
     output_dir,
     smoke_test,
+    rollout_id,
+    store,
+    timeout,
+    entries,
 ):
     """Test RL rollouts before submitting.
 
-    Runs rollouts via the /api/rnow/rollout endpoint in Modal sandbox.
+    Runs rollouts via the /api/rnow/rollout endpoint on Cloud Run.
 
     Use --smoke-test to use OpenAI gpt-5-nano instead of tinker models
     (requires OPENAI_API_KEY environment variable).
+
+    Use --id to fetch results for an existing rollout.
 
     Only works with RL projects (dataset_type: rl).
     """
     global _shutdown_requested
     _shutdown_requested = False
 
+    resolved_api_url = api_url or ctx.obj.get("api_url", "").replace("/api", "") or DEFAULT_API_URL
+
+    # Handle --id flag: just fetch existing rollout results
+    if rollout_id:
+        asyncio.run(
+            _fetch_rollout_results(
+                rollout_id=rollout_id,
+                api_url=resolved_api_url,
+                store=store,
+                truncate=truncate,
+                output_dir=output_dir,
+            )
+        )
+        return
+
     # Check for OpenAI API key in smoke test mode
     openai_api_key = None
     if smoke_test:
-        # Get API key from environment variable
         openai_api_key = os.environ.get("OPENAI_API_KEY")
         if not openai_api_key:
             raise click.ClickException(
@@ -330,13 +428,11 @@ def test(
         def handle_sigint():
             global _shutdown_requested
             if _shutdown_requested:
-                # Second Ctrl+C, force exit
                 sys.exit(1)
             _shutdown_requested = True
             click.echo("\n" + click.style("Interrupted. Cancelling...", fg="yellow"))
             task.cancel()
 
-        # Add signal handler to the event loop
         loop.add_signal_handler(signal.SIGINT, handle_sigint)
 
         try:
@@ -346,15 +442,16 @@ def test(
                 multi_turn=multi_turn,
                 with_tools=with_tools,
                 model_override=model,
-                api_url=api_url
-                or ctx.obj.get("api_url", "").replace("/api", "")
-                or DEFAULT_API_URL,
+                api_url=resolved_api_url,
                 verbose=verbose,
                 truncate=truncate,
                 debug=debug,
                 output_dir=output_dir,
                 smoke_test=smoke_test,
                 openai_api_key=openai_api_key,
+                store=store,
+                timeout_minutes=timeout,
+                entries=entries,
             )
         except asyncio.CancelledError:
             click.echo(click.style("Aborted.", fg="yellow"))
@@ -365,6 +462,145 @@ def test(
         asyncio.run(run_with_cancellation())
     except KeyboardInterrupt:
         click.echo(click.style("Aborted.", fg="yellow"))
+
+
+async def _fetch_rollout_results(
+    rollout_id: str,
+    api_url: str,
+    store: bool = False,
+    truncate: int | None = None,
+    output_dir: Path | None = None,
+):
+    """Fetch results for an existing rollout ID."""
+    click.echo(f"Fetching results for rollout: {click.style(rollout_id, fg=TEAL_RGB)}")
+
+    client = httpx.AsyncClient(timeout=30.0)
+    auth_headers = get_auth_headers()
+
+    try:
+        resp = await client.get(
+            f"{api_url}/api/rnow/rollout",
+            params={"id": rollout_id},
+            headers=auth_headers,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    finally:
+        await client.aclose()
+
+    status = data.get("status")
+    if status == "pending":
+        click.echo(click.style("Rollout still running...", fg="yellow"))
+        click.echo(f"Poll again with: rnow test --id {rollout_id}")
+        return
+
+    if status == "failed":
+        click.echo(click.style(f"Rollout failed: {data.get('error', 'Unknown')}", fg="red"))
+        return
+
+    # Store rollout ID if requested
+    if store:
+        _store_rollout_id(rollout_id, data)
+
+    # Display results
+    results = data.get("results", [])
+    _display_results(results, truncate, output_dir, rollout_id)
+
+    # Show billing
+    billing = data.get("billing", {})
+    tokens = billing.get("prompt_tokens", 0) + billing.get("completion_tokens", 0)
+    if tokens > 0:
+        click.echo(f"Tokens: {tokens}")
+
+
+def _store_rollout_id(rollout_id: str, data: dict):
+    """Store rollout ID and results in ./rollouts/<id>.txt"""
+    rollouts_dir = Path("rollouts")
+    rollouts_dir.mkdir(exist_ok=True)
+
+    filepath = rollouts_dir / f"{rollout_id}.txt"
+    with open(filepath, "w") as f:
+        f.write(f"Rollout ID: {rollout_id}\n")
+        f.write(f"Status: {data.get('status', 'unknown')}\n")
+        f.write(f"S3 Path: rollouts/{rollout_id}/result.json\n")
+        f.write("\n")
+
+        # Write summary
+        results = data.get("results", [])
+        successful = [r for r in results if r.get("success")]
+        if successful:
+            rewards = [r.get("total_reward", 0) for r in successful]
+            f.write(f"Successful: {len(successful)}/{len(results)}\n")
+            f.write(f"Mean Reward: {sum(rewards)/len(rewards):.3f}\n")
+
+        # Write billing
+        billing = data.get("billing", {})
+        tokens = billing.get("prompt_tokens", 0) + billing.get("completion_tokens", 0)
+        if tokens > 0:
+            f.write(f"Tokens: {tokens}\n")
+
+        f.write("\n--- Full Results ---\n")
+        f.write(json.dumps(data, indent=2))
+
+    click.echo(f"Stored: {click.style(str(filepath), fg=TEAL_RGB)}")
+
+
+def _display_results(
+    results: list[dict],
+    truncate: int | None,
+    output_dir: Path | None,
+    rollout_id: str | None = None,
+):
+    """Display rollout results."""
+    rewards = []
+
+    for idx, result in enumerate(results):
+        click.echo(f"Rollout {idx+1}/{len(results)}")
+
+        if not result.get("success"):
+            click.echo(click.style(f"  ✗ {result.get('error', 'Unknown error')}", fg="red"))
+            click.echo()
+            continue
+
+        total_reward = result.get("total_reward", 0.0)
+        rewards.append(total_reward)
+
+        # Show conversation
+        for msg in result.get("conversation", []):
+            role = msg.get("role", "unknown")
+            content = msg.get("content", "")
+            if truncate and len(content) > truncate:
+                content = content[:truncate] + "..."
+            tag = click.style(f"[{role}]", fg="red")
+            click.echo(f"  {tag} {content}")
+
+        reward_breakdown = result.get("rewards", {})
+        reward_str = ", ".join(f"{k}={v:.3f}" for k, v in reward_breakdown.items())
+        turns = result.get("turns", 0)
+        click.echo(
+            f"  {click.style('reward', fg=TEAL_RGB)}={total_reward:.3f} "
+            f"| turns={turns} "
+            f"| [{reward_str}]"
+        )
+        click.echo()
+
+    # Save to files if requested
+    if output_dir and results:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        for idx, result in enumerate(results):
+            if result.get("success"):
+                filename = output_dir / f"rollout_{timestamp}_{idx+1}.json"
+                filename.write_text(json.dumps(result, indent=2))
+        click.echo(f"Results saved to {click.style(str(output_dir), fg=TEAL_RGB)}")
+
+    # Summary
+    if rewards:
+        mean_reward = sum(rewards) / len(rewards)
+        click.echo()
+        click.echo(f"Mean reward: {click.style(f'{mean_reward:.3f}', fg=TEAL_RGB)}")
+        if rollout_id:
+            click.echo(f"Rollout ID: {click.style(rollout_id, fg=TEAL_RGB)}")
 
 
 async def _test_async(
@@ -380,6 +616,9 @@ async def _test_async(
     output_dir: Path | None = None,
     smoke_test: bool = False,
     openai_api_key: str | None = None,
+    store: bool = False,
+    timeout_minutes: int = 60,
+    entries: tuple[int, ...] = (),
 ):
     project_dir = Path(project_dir)
 
@@ -449,8 +688,6 @@ async def _test_async(
             click.echo(f"MCP: {mcp_url}")
     click.echo()
 
-    rewards = []
-
     try:
         # Create one RolloutClient for all rollouts
         client = RolloutClient(
@@ -467,20 +704,48 @@ async def _test_async(
         )
 
         # Select samples for batch rollout
-        selected_samples = [random.choice(samples) for _ in range(num_rollouts)]
+        if entries:
+            # Parse entries - support both "-e 0 -e 2" and "-e 0,2,5"
+            entry_indices = []
+            for entry in entries:
+                # Handle comma-separated values
+                for part in str(entry).split(","):
+                    part = part.strip()
+                    if part:
+                        try:
+                            idx = int(part)
+                        except ValueError:
+                            raise click.ClickException(f"Invalid entry index: {part}")
+                        if idx < 0 or idx >= len(samples):
+                            raise click.ClickException(
+                                f"Entry index {idx} out of range. train.jsonl has {len(samples)} entries (0-{len(samples)-1})"
+                            )
+                        entry_indices.append(idx)
+
+            if not entry_indices:
+                raise click.ClickException("No valid entry indices provided")
+
+            selected_samples = [samples[idx] for idx in entry_indices]
+            click.echo(f"Testing entries: {entry_indices}")
+        else:
+            # Random selection
+            selected_samples = [random.choice(samples) for _ in range(num_rollouts)]
 
         # Start spinner for batch rollout
-        spinner = Spinner(f"Running {num_rollouts} rollouts...")
+        spinner = Spinner(f"Starting {len(selected_samples)} rollouts...")
         spinner.start()
 
         start_time = time.time()
+        rollout_id = None
 
         try:
-            # Single API call - server runs all rollouts in parallel with one sampler
-            batch_results = await client.run_batch_rollouts(
+            # Start rollout and poll for results with exponential backoff
+            rollout_id, batch_results = await client.run_batch_rollouts(
                 samples=selected_samples,
                 tools_py_code=tools_py_code,
                 rewards_py_code=rewards_py_code,
+                spinner=spinner,
+                timeout_minutes=timeout_minutes,
             )
         except asyncio.CancelledError:
             batch_results = []
@@ -491,83 +756,29 @@ async def _test_async(
         total_time = time.time() - start_time
         spinner.stop()
 
+        # Show rollout ID
+        if rollout_id:
+            click.echo(f"Rollout ID: {click.style(rollout_id, fg=TEAL_RGB)}")
+            click.echo()
+
         # Check if shutdown was requested
         if _shutdown_requested:
             await client.close()
             return
 
-        # Save results to files if output_dir is specified
-        if output_dir and batch_results:
-            output_dir.mkdir(parents=True, exist_ok=True)
-            timestamp = time.strftime("%Y%m%d_%H%M%S")
-
-            # Save individual rollout results
-            for idx, result in enumerate(batch_results):
-                if isinstance(result, Exception):
-                    continue
-                filename = output_dir / f"rollout_{timestamp}_{idx+1}.json"
-                filename.write_text(json.dumps(result, indent=2))
-
-            # Save summary with all results
-            summary = {
-                "model": model_name,
-                "num_rollouts": num_rollouts,
-                "max_turns": max_turns,
-                "timestamp": timestamp,
-                "total_time_seconds": total_time,
-                "results": [r for r in batch_results if not isinstance(r, Exception)],
-            }
-            summary_file = output_dir / f"summary_{timestamp}.json"
-            summary_file.write_text(json.dumps(summary, indent=2))
-            click.echo(f"Results saved to {click.style(str(output_dir), fg=TEAL_RGB)}")
-            click.echo()
-
-        # Display results in order
-        for idx, result in enumerate(batch_results):
-            click.echo(f"Rollout {idx+1}/{num_rollouts}")
-
-            if isinstance(result, Exception):
-                if isinstance(result, httpx.HTTPStatusError):
-                    click.echo(
-                        click.style(f"  ✗ HTTP Error: {result.response.status_code}", fg="red")
-                    )
-                    try:
-                        error_detail = result.response.json()
-                        click.echo(
-                            f"    {error_detail.get('detail', error_detail.get('error', ''))}"
-                        )
-                    except Exception:
-                        pass
-                else:
-                    click.echo(click.style(f"  ✗ {result}", fg="red"))
-                click.echo()
-                continue
-
-            total_reward = result.get("total_reward", 0.0)
-            rewards.append(total_reward)
-
-            # Get conversation
-            conversation = result.get("conversation", [])
-
-            # Show all messages with red tags
-            for msg in conversation:
-                role = msg.get("role", "unknown")
-                content = msg.get("content", "")
-                # Truncate if flag is set
-                if truncate and len(content) > truncate:
-                    content = content[:truncate] + "..."
-                tag = click.style(f"[{role}]", fg="red")
-                click.echo(f"  {tag} {content}")
-
-            reward_breakdown = result.get("rewards", {})
-            reward_str = ", ".join(f"{k}={v:.3f}" for k, v in reward_breakdown.items())
-            turns = result.get("turns", 0)
-            click.echo(
-                f"  {click.style('reward', fg=TEAL_RGB)}={total_reward:.3f} "
-                f"| turns={turns} "
-                f"| [{reward_str}]"
+        # Store results if requested
+        if store and rollout_id:
+            _store_rollout_id(
+                rollout_id,
+                {
+                    "status": "completed",
+                    "results": batch_results,
+                    "billing": {"prompt_tokens": 0, "completion_tokens": 0},
+                },
             )
-            click.echo()
+
+        # Display results using shared function
+        _display_results(batch_results, truncate, output_dir, rollout_id)
 
         # Get total billing
         total_charged = client.total_charged_dollars
@@ -578,12 +789,7 @@ async def _test_async(
     except Exception:
         raise
 
-    if rewards:
-        mean_reward = sum(rewards) / len(rewards)
-        click.echo()
-        click.echo(f"Mean reward: {click.style(f'{mean_reward:.3f}', fg=TEAL_RGB)}")
-        click.echo(f"Latency: {click.style(f'{total_time:.1f}s', fg=TEAL_RGB)}")
-        if total_charged > 0:
-            click.echo(f"Cost: {click.style(f'${total_charged:.4f}', fg=TEAL_RGB)}")
-    else:
-        click.echo(click.style("\nNo successful rollouts completed.", fg="yellow"))
+    # Show timing and cost
+    click.echo(f"Latency: {click.style(f'{total_time:.1f}s', fg=TEAL_RGB)}")
+    if total_charged > 0:
+        click.echo(f"Cost: {click.style(f'${total_charged:.4f}', fg=TEAL_RGB)}")

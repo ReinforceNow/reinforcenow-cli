@@ -1,6 +1,7 @@
 """InSTA-150k criteria evaluation reward using GPT-5-nano."""
 
-import httpx
+import json
+import urllib.request
 
 from rnow.core import RewardArgs, reward
 
@@ -31,18 +32,27 @@ Agent conversation:
 {conversation[:4000]}"""
 
     try:
-        resp = httpx.post(
-            "https://api.openai.com/v1/responses",
-            headers={"Authorization": f"Bearer {api_key}"},
-            json={
+        data = json.dumps(
+            {
                 "model": "gpt-5-nano",
                 "instructions": instructions,
                 "input": prompt,
                 "max_output_tokens": 64,
+            }
+        ).encode("utf-8")
+
+        req = urllib.request.Request(
+            "https://api.openai.com/v1/responses",
+            data=data,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
             },
-            timeout=30,
         )
-        result = resp.json()
+
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            result = json.loads(resp.read().decode("utf-8"))
+
         for item in result.get("output", []):
             if item.get("type") == "message":
                 for c in item.get("content", []):
@@ -52,5 +62,5 @@ Agent conversation:
                         ]
                         return sum(scores) / len(criteria) if scores else 0.0
         return 0.0
-    except:
+    except Exception:
         return 0.0
