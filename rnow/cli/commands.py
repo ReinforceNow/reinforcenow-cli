@@ -1525,6 +1525,16 @@ def _submit_single_run(
                 )
             )
 
+    # Add Dockerfile.* files for local/ docker images
+    for dockerfile_path in dir.glob("Dockerfile.*"):
+        file_name = dockerfile_path.name
+        files.append(
+            (
+                file_name.replace(".", "_"),
+                (file_name, open(dockerfile_path, "rb"), "application/octet-stream"),
+            )
+        )
+
     headers = auth.get_auth_headers()
     headers.pop("Content-Type", None)
 
