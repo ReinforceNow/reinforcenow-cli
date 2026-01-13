@@ -515,8 +515,7 @@ async def _fetch_rollout_results(
         return
 
     if status == "failed":
-        click.echo(click.style(f"Rollout failed: {data.get('error', 'Unknown')}", fg="red"))
-        return
+        raise click.ClickException(f"Rollout failed: {data.get('error', 'Unknown')}")
 
     # Store rollout ID if requested
     if store:
@@ -524,13 +523,17 @@ async def _fetch_rollout_results(
 
     # Display results
     results = data.get("results", [])
-    _display_results(results, truncate, output_dir, rollout_id)
+    failed_count = _display_results(results, truncate, output_dir, rollout_id)
 
     # Show billing
     billing = data.get("billing", {})
     tokens = billing.get("prompt_tokens", 0) + billing.get("completion_tokens", 0)
     if tokens > 0:
         click.echo(f"Tokens: {tokens}")
+
+    # Fail if any rollouts failed
+    if failed_count > 0:
+        raise click.ClickException(f"{failed_count} rollout(s) failed. See errors above.")
 
 
 def _store_rollout_id(rollout_id: str, data: dict):
@@ -570,9 +573,14 @@ def _display_results(
     truncate: int | None,
     output_dir: Path | None,
     rollout_id: str | None = None,
-):
-    """Display rollout results."""
+) -> int:
+    """Display rollout results.
+
+    Returns:
+        Number of failed rollouts (0 = all succeeded)
+    """
     rewards = []
+    failed_count = 0
 
     for idx, result in enumerate(results):
         click.echo(f"Rollout {idx + 1}/{len(results)}")
@@ -580,6 +588,7 @@ def _display_results(
         if not result.get("success"):
             click.echo(click.style(f"  ✗ {result.get('error', 'Unknown error')}", fg="red"))
             click.echo()
+            failed_count += 1
             continue
 
         total_reward = result.get("total_reward", 0.0)
@@ -621,6 +630,8 @@ def _display_results(
         click.echo(f"Mean reward: {click.style(f'{mean_reward:.3f}', fg=TEAL_RGB)}")
         if rollout_id:
             click.echo(f"Rollout ID: {click.style(rollout_id, fg=TEAL_RGB)}")
+
+    return failed_count
 
 
 async def _test_async(
@@ -819,7 +830,7 @@ async def _test_async(
             )
 
         # Display results using shared function
-        _display_results(batch_results, truncate, output_dir, rollout_id)
+        failed_count = _display_results(batch_results, truncate, output_dir, rollout_id)
 
         # Get total billing
         total_charged = client.total_charged_dollars
@@ -834,3 +845,7 @@ async def _test_async(
     click.echo(f"Latency: {click.style(f'{total_time:.1f}s', fg=TEAL_RGB)}")
     if total_charged > 0:
         click.echo(f"Cost: {click.style(f'${total_charged:.4f}', fg=TEAL_RGB)}")
+
+    # Fail if any rollouts failed
+    if failed_count > 0:
+        raise click.ClickException(f"{failed_count} rollout(s) failed. See errors above.")
