@@ -122,6 +122,7 @@ class RolloutClient:
         samples: list[dict],
         tools_py_code: str | None = None,
         rewards_py_code: str | None = None,
+        requirements_txt: str | None = None,
         dockerfiles: dict[str, str] | None = None,
         secrets: dict[str, str] | None = None,
     ) -> str:
@@ -143,6 +144,10 @@ class RolloutClient:
 
         if self.mcp_url:
             payload["mcp_url"] = self.mcp_url
+
+        # Send requirements.txt for pip install
+        if requirements_txt:
+            payload["requirements_txt"] = requirements_txt
 
         # Send Dockerfiles for local/ images
         if dockerfiles:
@@ -184,6 +189,7 @@ class RolloutClient:
         samples: list[dict],
         tools_py_code: str | None = None,
         rewards_py_code: str | None = None,
+        requirements_txt: str | None = None,
         dockerfiles: dict[str, str] | None = None,
         secrets: dict[str, str] | None = None,
         spinner: Spinner | None = None,
@@ -195,7 +201,7 @@ class RolloutClient:
         """
         # Start the rollout
         rollout_id = await self.start_rollout(
-            samples, tools_py_code, rewards_py_code, dockerfiles, secrets
+            samples, tools_py_code, rewards_py_code, requirements_txt, dockerfiles, secrets
         )
 
         if spinner:
@@ -669,6 +675,12 @@ async def _test_async(
     rewards_py_code = rewards_path.read_text()
     tools_py_code = tools_path.read_text() if with_tools and tools_path.exists() else None
 
+    # Read requirements.txt if exists
+    requirements_path = project_dir / "requirements.txt"
+    requirements_txt = requirements_path.read_text() if requirements_path.exists() else None
+    if requirements_txt:
+        click.echo("  Found requirements.txt")
+
     # Load samples
     samples = [json.loads(line) for line in train_path.read_text().splitlines() if line.strip()]
 
@@ -770,6 +782,7 @@ async def _test_async(
                 samples=selected_samples,
                 tools_py_code=tools_py_code,
                 rewards_py_code=rewards_py_code,
+                requirements_txt=requirements_txt,
                 dockerfiles=dockerfiles if dockerfiles else None,
                 secrets=project_secrets if project_secrets else None,
                 spinner=spinner,
