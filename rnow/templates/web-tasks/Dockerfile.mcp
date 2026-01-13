@@ -1,4 +1,0 @@
-# MCP Playwright with HTTP transport enabled
-FROM mcp/playwright
-
-ENTRYPOINT ["node", "cli.js", "--headless", "--browser", "chromium", "--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu", "--port", "8931", "--host", "0.0.0.0", "--allowed-hosts", "*"]

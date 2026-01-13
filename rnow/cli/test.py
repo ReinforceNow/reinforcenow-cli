@@ -122,6 +122,8 @@ class RolloutClient:
         samples: list[dict],
         tools_py_code: str | None = None,
         rewards_py_code: str | None = None,
+        dockerfiles: dict[str, str] | None = None,
+        secrets: dict[str, str] | None = None,
     ) -> str:
         """
         Start rollouts and return rollout ID immediately.
@@ -141,6 +143,14 @@ class RolloutClient:
 
         if self.mcp_url:
             payload["mcp_url"] = self.mcp_url
+
+        # Send Dockerfiles for local/ images
+        if dockerfiles:
+            payload["dockerfiles"] = dockerfiles
+
+        # Send project secrets (from .env file)
+        if secrets:
+            payload["secrets"] = secrets
 
         if self.smoke_test:
             payload["smoke_test"] = True
@@ -174,6 +184,8 @@ class RolloutClient:
         samples: list[dict],
         tools_py_code: str | None = None,
         rewards_py_code: str | None = None,
+        dockerfiles: dict[str, str] | None = None,
+        secrets: dict[str, str] | None = None,
         spinner: Spinner | None = None,
         timeout_minutes: int = 30,
     ) -> tuple[str, list[dict]]:
@@ -182,7 +194,9 @@ class RolloutClient:
         Returns (rollout_id, results).
         """
         # Start the rollout
-        rollout_id = await self.start_rollout(samples, tools_py_code, rewards_py_code)
+        rollout_id = await self.start_rollout(
+            samples, tools_py_code, rewards_py_code, dockerfiles, secrets
+        )
 
         if spinner:
             spinner.update(f"Running rollouts... (ID: {rollout_id[:8]})")
@@ -531,7 +545,7 @@ def _store_rollout_id(rollout_id: str, data: dict):
         if successful:
             rewards = [r.get("total_reward", 0) for r in successful]
             f.write(f"Successful: {len(successful)}/{len(results)}\n")
-            f.write(f"Mean Reward: {sum(rewards)/len(rewards):.3f}\n")
+            f.write(f"Mean Reward: {sum(rewards) / len(rewards):.3f}\n")
 
         # Write billing
         billing = data.get("billing", {})
@@ -555,7 +569,7 @@ def _display_results(
     rewards = []
 
     for idx, result in enumerate(results):
-        click.echo(f"Rollout {idx+1}/{len(results)}")
+        click.echo(f"Rollout {idx + 1}/{len(results)}")
 
         if not result.get("success"):
             click.echo(click.style(f"  ✗ {result.get('error', 'Unknown error')}", fg="red"))
@@ -590,7 +604,7 @@ def _display_results(
         timestamp = time.strftime("%Y%m%d_%H%M%S")
         for idx, result in enumerate(results):
             if result.get("success"):
-                filename = output_dir / f"rollout_{timestamp}_{idx+1}.json"
+                filename = output_dir / f"rollout_{timestamp}_{idx + 1}.json"
                 filename.write_text(json.dumps(result, indent=2))
         click.echo(f"Results saved to {click.style(str(output_dir), fg=TEAL_RGB)}")
 
@@ -658,6 +672,26 @@ async def _test_async(
     # Load samples
     samples = [json.loads(line) for line in train_path.read_text().splitlines() if line.strip()]
 
+    # Read Dockerfile.* files for local/ docker images
+    dockerfiles: dict[str, str] = {}
+    for dockerfile_path in project_dir.glob("Dockerfile.*"):
+        dockerfiles[dockerfile_path.name] = dockerfile_path.read_text()
+        click.echo(f"  Found {dockerfile_path.name}")
+
+    # Read .env file for project secrets
+    project_secrets: dict[str, str] = {}
+    env_path = project_dir / ".env"
+    if env_path.exists():
+        for line in env_path.read_text().splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                key, _, value = line.partition("=")
+                # Remove quotes if present
+                value = value.strip().strip("'\"")
+                project_secrets[key.strip()] = value
+        if project_secrets:
+            click.echo(f"  Loaded secrets: {list(project_secrets.keys())}")
+
     if not samples:
         raise click.ClickException("train.jsonl is empty")
 
@@ -710,7 +744,7 @@ async def _test_async(
                             raise click.ClickException(f"Invalid entry index: {part}")
                         if idx < 0 or idx >= len(samples):
                             raise click.ClickException(
-                                f"Entry index {idx} out of range. train.jsonl has {len(samples)} entries (0-{len(samples)-1})"
+                                f"Entry index {idx} out of range. train.jsonl has {len(samples)} entries (0-{len(samples) - 1})"
                             )
                         entry_indices.append(idx)
 
@@ -736,6 +770,8 @@ async def _test_async(
                 samples=selected_samples,
                 tools_py_code=tools_py_code,
                 rewards_py_code=rewards_py_code,
+                dockerfiles=dockerfiles if dockerfiles else None,
+                secrets=project_secrets if project_secrets else None,
                 spinner=spinner,
                 timeout_minutes=timeout_minutes,
             )

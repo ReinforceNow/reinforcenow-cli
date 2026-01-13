@@ -113,8 +113,7 @@ def _validate_reward_signature(func: Callable) -> None:
     second_param = params[1]
     if second_param.name not in hints:
         raise TypeError(
-            f"Reward '{func.__name__}': parameter '{second_param.name}' must have "
-            "type hint 'list'."
+            f"Reward '{func.__name__}': parameter '{second_param.name}' must have type hint 'list'."
         )
     second_type = hints[second_param.name]
     # Allow list or List (from typing)
