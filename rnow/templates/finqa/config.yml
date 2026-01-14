@@ -11,7 +11,7 @@ model:
   qlora_rank: 32
 
 algorithm:
-  loss_fn: grpo
+  loss_fn: ppo
   adv_estimator: grpo
 
 rollout:

@@ -5,8 +5,8 @@ Test command for running RL rollouts via API.
 Uses the /api/rnow/rollout endpoint which runs rollouts on Cloud Run.
 
 Modes:
-- Default: Uses tinker models (requires auth)
-- --smoke-test: Uses OpenAI gpt-5-nano (requires OPENAI_API_KEY)
+- Default: Uses OpenAI gpt-5-nano (requires OPENAI_API_KEY)
+- --tinker-api: Uses Tinker models from config.yml (requires auth)
 """
 
 from __future__ import annotations
@@ -351,9 +351,9 @@ async def _run_single_rollout(
     help="Save rollout results as JSON files in this directory",
 )
 @click.option(
-    "--smoke-test",
+    "--tinker-api",
     is_flag=True,
-    help="Use OpenAI models instead of tinker (requires OPENAI_API_KEY env var). Default: gpt-5-nano",
+    help="Use Tinker API instead of OpenAI (uses model from config.yml)",
 )
 @click.option(
     "--id",
@@ -393,7 +393,7 @@ def test(
     truncate,
     debug,
     output_dir,
-    smoke_test,
+    tinker_api,
     rollout_id,
     store,
     timeout,
@@ -403,8 +403,8 @@ def test(
 
     Runs rollouts via the /api/rnow/rollout endpoint on Cloud Run.
 
-    Use --smoke-test to use OpenAI gpt-5-nano instead of tinker models
-    (requires OPENAI_API_KEY environment variable).
+    By default uses OpenAI gpt-5-nano (requires OPENAI_API_KEY env var).
+    Use --tinker-api to use Tinker API with the model from config.yml.
 
     Use --id to fetch results for an existing rollout.
 
@@ -428,17 +428,18 @@ def test(
         )
         return
 
-    # Check for OpenAI API key in smoke test mode
+    # Check for OpenAI API key (default mode uses OpenAI)
     openai_api_key = None
-    if smoke_test:
+    if tinker_api:
+        require_auth()
+    else:
         openai_api_key = os.environ.get("OPENAI_API_KEY")
         if not openai_api_key:
             raise click.ClickException(
-                "OPENAI_API_KEY environment variable is required for smoke test mode.\n"
-                "Set it with: export OPENAI_API_KEY=sk-..."
+                "OPENAI_API_KEY environment variable is required.\n"
+                "Set it with: export OPENAI_API_KEY=sk-...\n\n"
+                "Or use --tinker-api to use the Tinker API instead."
             )
-    else:
-        require_auth()
 
     async def run_with_cancellation():
         """Run test with proper cancellation support."""
@@ -467,7 +468,7 @@ def test(
                 truncate=truncate,
                 debug=debug,
                 output_dir=output_dir,
-                smoke_test=smoke_test,
+                use_openai=not tinker_api,
                 openai_api_key=openai_api_key,
                 store=store,
                 timeout_minutes=timeout,
@@ -645,7 +646,7 @@ async def _test_async(
     truncate: int | None,
     debug: bool = False,
     output_dir: Path | None = None,
-    smoke_test: bool = False,
+    use_openai: bool = True,
     openai_api_key: str | None = None,
     store: bool = False,
     timeout_minutes: int = 60,
@@ -665,7 +666,31 @@ async def _test_async(
     else:
         config_data = json.loads(config_path.read_text())
 
-    config = ProjectConfig(**config_data)
+    try:
+        config = ProjectConfig(**config_data)
+    except Exception as e:
+        # Format pydantic validation errors nicely
+        error_msg = str(e)
+        if "validation error" in error_msg.lower():
+            import re
+
+            # Extract field and allowed values from pydantic error
+            field_match = re.search(r"(\w+\.\w+|\w+)\n\s+Input should be (.+?) \[", error_msg)
+            if field_match:
+                field = field_match.group(1)
+                allowed = field_match.group(2)
+                value_match = re.search(r"input_value='([^']+)'", error_msg)
+                value = value_match.group(1) if value_match else "unknown"
+
+                click.echo()
+                click.echo(click.style("  Invalid value in config.yml", fg="cyan", bold=True))
+                click.echo()
+                click.echo(f"  Field:    {click.style(field, fg='white', bold=True)}")
+                click.echo(f"  Got:      {click.style(value, fg='red')}")
+                click.echo(f"  Expected: {click.style(allowed, fg='green')}")
+                click.echo()
+                raise SystemExit(1)
+        raise click.ClickException(f"Failed to parse config.yml: {e}")
 
     if config.dataset_type.value != "rl":
         raise click.ClickException(
@@ -718,13 +743,13 @@ async def _test_async(
     if not samples:
         raise click.ClickException("train.jsonl is empty")
 
-    # Model selection: --model flag > smoke-test default (gpt-5-nano) > config.model.path
+    # Model selection: --model flag > tinker-api (config.model.path) > default (gpt-5-nano)
     if model_override:
         model_name = model_override
-    elif smoke_test:
-        model_name = "gpt-5-nano"
-    else:
+    elif not use_openai:
         model_name = config.model.path
+    else:
+        model_name = "gpt-5-nano"
 
     max_tokens = config.rollout.max_tokens if config.rollout else 2048
     max_turns_config = config.rollout.max_turns if config.rollout else 1
@@ -734,11 +759,13 @@ async def _test_async(
     max_turns = 1 if not multi_turn else max_turns_config
 
     # Display mode and model info
-    if smoke_test:
-        click.echo(f"Mode: {click.style('SMOKE TEST', fg=TEAL_RGB)} (OpenAI {model_name})")
+    if use_openai:
+        click.echo(f"Model: {click.style(model_name, fg=TEAL_RGB)} (OpenAI)")
     else:
         thinking_display = get_thinking_mode_display(config)
-        click.echo(f"Model: {model_name} ({click.style(thinking_display, fg=TEAL_RGB)})")
+        click.echo(
+            f"Model: {model_name} ({click.style(thinking_display, fg=TEAL_RGB)}) [Tinker API]"
+        )
 
     click.echo()
 
@@ -752,7 +779,7 @@ async def _test_async(
             max_turns=max_turns,
             termination_policy=termination_policy,
             debug=debug,
-            smoke_test=smoke_test,
+            smoke_test=use_openai,
             openai_api_key=openai_api_key,
             mcp_url=mcp_url,
         )
