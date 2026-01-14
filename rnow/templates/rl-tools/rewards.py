@@ -2,13 +2,13 @@ import re
 
 import jellyfish
 
-from rnow.core import RewardArgs, reward
+from rnow.core import RewardArgs, get_response, reward
 
 
 @reward
 def accuracy(args: RewardArgs, messages: list) -> float:
     """Check if the final answer matches the expected answer."""
-    response = messages[-1].get("content", "")
+    response = get_response(messages)
     expected = args.metadata.get("expected_answer", "").strip().lower()
 
     # Extract content after "Final Answer:"

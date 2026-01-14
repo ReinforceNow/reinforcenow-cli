@@ -1,13 +1,13 @@
 from math_verify import LatexExtractionConfig, parse, verify
 
-from rnow.core import RewardArgs, reward
+from rnow.core import RewardArgs, get_response, reward
 
 
 @reward
 def accuracy(args: RewardArgs, messages: list) -> float:
     gold = parse(args.metadata["expected_answer"])
     pred = parse(
-        messages[-1]["content"], extraction_config=[LatexExtractionConfig(boxed_match_priority=0)]
+        get_response(messages), extraction_config=[LatexExtractionConfig(boxed_match_priority=0)]
     )
     if not pred:
         return 0.0

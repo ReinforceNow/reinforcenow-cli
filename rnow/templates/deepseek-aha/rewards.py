@@ -1,19 +1,18 @@
 import re
 
-from rnow.core import RewardArgs, reward
+from rnow.core import RewardArgs, get_response, reward
 
 
 @reward(precondition=True)
 def format(args: RewardArgs, messages: list) -> float:
     """Check for \\boxed{} format."""
-    response = messages[-1]["content"]
-    return 1.0 if re.search(r"\\boxed\{", response) else 0.0
+    return 1.0 if re.search(r"\\boxed\{", get_response(messages)) else 0.0
 
 
 @reward
 def accuracy(args: RewardArgs, messages: list) -> float:
     """Check if equation equals target and uses all numbers exactly once."""
-    response = messages[-1]["content"]
+    response = get_response(messages)
     target = args.metadata["target"]
     numbers = args.metadata["numbers"]
 

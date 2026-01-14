@@ -7,7 +7,7 @@ Users only need:
 - RewardArgs for type hints in reward functions
 """
 
-from rnow.models import RewardArgs
+from rnow.models import RewardArgs, get_response
 
 from .reward import (
     REWARD_REGISTRY,
@@ -24,6 +24,7 @@ __all__ = [
     "reward",
     "tool",
     "RewardArgs",
+    "get_response",
     # Registries (used by CLI and trainer)
     "REWARD_REGISTRY",
     "TOOL_REGISTRY",

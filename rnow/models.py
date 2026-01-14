@@ -72,6 +72,25 @@ class RewardArgs(BaseModel):
         arbitrary_types_allowed = True
 
 
+def get_response(messages: list) -> str:
+    """Extract text content from the last assistant message.
+
+    Handles both string and list content (tinker's ContentPart format).
+    Use this in reward functions to safely get the model's response.
+
+    Example:
+        @reward
+        def my_reward(args: RewardArgs, messages: list) -> float:
+            response = get_response(messages)
+            return 1.0 if "answer" in response else 0.0
+    """
+    content = messages[-1].get("content", "") if messages else ""
+    if isinstance(content, list):
+        # tinker's ContentPart format: [{type: "thinking", thinking: "..."}, {type: "text", text: "..."}]
+        return "".join(p.get("text", "") or p.get("thinking", "") for p in content)
+    return content or ""
+
+
 # --- train.jsonl validation models ---
 
 

@@ -6,7 +6,7 @@ Uses math_verify for robust numerical comparison (same as rl-single template).
 
 from math_verify import LatexExtractionConfig, parse, verify
 
-from rnow.core import RewardArgs, reward
+from rnow.core import RewardArgs, get_response, reward
 
 
 @reward
@@ -25,7 +25,7 @@ def answer_correctness(args: RewardArgs, messages: list) -> float:
 
     gold = parse(str(expected))
     pred = parse(
-        messages[-1]["content"], extraction_config=[LatexExtractionConfig(boxed_match_priority=0)]
+        get_response(messages), extraction_config=[LatexExtractionConfig(boxed_match_priority=0)]
     )
 
     if not pred:

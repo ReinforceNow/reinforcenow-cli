@@ -612,6 +612,22 @@ def _display_results(
             f"| turns={turns} "
             f"| [{reward_str}]"
         )
+
+        # Show metadata (ground truth, etc.)
+        metadata = result.get("metadata", {})
+        if metadata:
+            # Show ground truth answer if present
+            if "answer" in metadata:
+                click.echo(f"  {click.style('expected', fg='yellow')}={metadata['answer']}")
+            # Show other metadata fields (excluding internal ones)
+            other_meta = {
+                k: v
+                for k, v in metadata.items()
+                if k not in ("answer", "prompt_index", "iteration", "batch")
+            }
+            if other_meta:
+                meta_str = ", ".join(f"{k}={v}" for k, v in other_meta.items())
+                click.echo(f"  {click.style('metadata', fg='cyan')}: {meta_str}")
         click.echo()
 
     # Save to files if requested
