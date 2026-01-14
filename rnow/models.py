@@ -93,6 +93,8 @@ class TrainEntry(BaseModel):
     rewards: list[str] | None = None  # Required for RL, optional for SFT
     tools: list[str] | None = None  # Optional: filter which tools are available
     docker: str | None = None  # Optional: Docker image for isolated sandbox
+    docker_env: dict[str, str] | None = None  # Optional: Environment variables for sandbox
+    docker_cmd: list[str] | None = None  # Optional: Entrypoint command for sandbox
     metadata: dict | None = None
     variables: dict | None = None
 
@@ -100,6 +102,13 @@ class TrainEntry(BaseModel):
     def validate_messages_not_empty(self):
         if not self.messages:
             raise ValueError("messages list cannot be empty")
+        return self
+
+    @model_validator(mode="after")
+    def validate_docker_fields(self):
+        """Validate that docker_env and docker_cmd require docker to be set."""
+        if (self.docker_env or self.docker_cmd) and not self.docker:
+            raise ValueError("docker_env and docker_cmd require docker field to be set")
         return self
 
 

@@ -353,7 +353,7 @@ async def _run_single_rollout(
 @click.option(
     "--smoke-test",
     is_flag=True,
-    help="Use OpenAI gpt-5-nano instead of tinker (requires OPENAI_API_KEY env var)",
+    help="Use OpenAI models instead of tinker (requires OPENAI_API_KEY env var). Default: gpt-5-nano",
 )
 @click.option(
     "--id",
@@ -718,8 +718,13 @@ async def _test_async(
     if not samples:
         raise click.ClickException("train.jsonl is empty")
 
-    # For smoke test, always use gpt-5-nano
-    model_name = "gpt-5-nano" if smoke_test else model_override or config.model.path
+    # Model selection: --model flag > smoke-test default (gpt-5-nano) > config.model.path
+    if model_override:
+        model_name = model_override
+    elif smoke_test:
+        model_name = "gpt-5-nano"
+    else:
+        model_name = config.model.path
 
     max_tokens = config.rollout.max_tokens if config.rollout else 2048
     max_turns_config = config.rollout.max_turns if config.rollout else 1
@@ -730,7 +735,7 @@ async def _test_async(
 
     # Display mode and model info
     if smoke_test:
-        click.echo(f"Mode: {click.style('SMOKE TEST', fg=TEAL_RGB)} (OpenAI gpt-5-nano)")
+        click.echo(f"Mode: {click.style('SMOKE TEST', fg=TEAL_RGB)} (OpenAI {model_name})")
     else:
         thinking_display = get_thinking_mode_display(config)
         click.echo(f"Model: {model_name} ({click.style(thinking_display, fg=TEAL_RGB)})")
