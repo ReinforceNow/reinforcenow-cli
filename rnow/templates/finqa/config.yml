@@ -3,8 +3,8 @@ dataset_type: rl
 
 data:
   train_file: train.jsonl
-  batch_size: 8
-  group_size: 4
+  batch_size: 16
+  group_size: 8
 
 model:
   path: Qwen/Qwen3-8B
