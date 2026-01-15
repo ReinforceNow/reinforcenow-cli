@@ -54,6 +54,13 @@ from rnow.cli import auth
 from rnow.cli.blob import MAX_INLINE_BYTES, maybe_upload_to_blob
 from rnow.cli.common import get_active_organization, require_auth
 from rnow.cli.cube import CubeSpinner
+from rnow.cli.upload import (
+    get_upload_session,
+    upload_directory_with_boto3,
+    upload_files_parallel_sync,
+    upload_images_parallel_sync,
+    upload_with_boto3,
+)
 
 CONFIG_DOCS_URL = "https://reinforcenow.ai/docs/cli-reference/configuration"
 
@@ -1088,6 +1095,7 @@ def orgs(ctx, org_id: str | None):
             "mcp-tavily",
             "deepseek-aha",
             "finqa",
+            "food-extract",
             "tutorial-reward",
             "tutorial-tool",
             "web-tasks",
@@ -1129,6 +1137,7 @@ def init(template: str, name: str):
         "tutorial-tool": "tutorial-tool",
         "deepseek-aha": "deepseek-aha",
         "finqa": "finqa-project",
+        "food-extract": "food-extract-project",
         "web-tasks": "web-tasks",
         "new": "new-project",
         "blank": "my-project",
@@ -2094,68 +2103,117 @@ def run(
     # Start cube spinner early
     spinner = CubeSpinner()
 
-    # Check if train.jsonl needs blob upload (>4MB)
-    train_path = dir / "train.jsonl"
-    train_size = train_path.stat().st_size
-    dataset_url = None
+    # Generate version IDs for direct S3 upload
+    project_version_id = str(uuid.uuid4())
+    dataset_version_id = str(uuid.uuid4())
 
-    if train_size > MAX_INLINE_BYTES:
-        spinner.start()
-        try:
-            _, blob_info = maybe_upload_to_blob(base_url, train_path, config.dataset_id)
-            if blob_info:
-                dataset_url = blob_info.get("url")
-        except Exception as e:
-            spinner.stop()
-            raise click.ClickException(f"Failed to upload large dataset: {e}")
+    # Collect files to upload
+    files_to_upload = []
 
-    # Upload files
-    files = []
-
-    # Add config file
+    # Config file
     if config_yml.exists():
-        files.append(
-            ("config_yml", ("config.yml", open(config_yml, "rb"), "application/octet-stream"))
-        )
+        files_to_upload.append(("config.yml", config_yml, "project"))
     elif config_json.exists():
-        files.append(
-            ("config_json", ("config.json", open(config_json, "rb"), "application/octet-stream"))
-        )
+        files_to_upload.append(("config.json", config_json, "project"))
 
-    # Add required files (skip train.jsonl if uploaded to blob)
+    # Required files
     for file_name, path in required_files.items():
-        if file_name == "train.jsonl" and dataset_url:
-            # Skip - already uploaded to blob
-            continue
-        files.append(
-            (file_name.replace(".", "_"), (file_name, open(path, "rb"), "application/octet-stream"))
-        )
+        if path.exists():
+            # train.jsonl goes to dataset, others to project
+            target = "dataset" if file_name == "train.jsonl" else "project"
+            files_to_upload.append((file_name, path, target))
 
-    # Add optional files (all in the same directory now)
+    # Optional files
     optional_files = {
         "tools.py": dir / "tools.py",
         "requirements.txt": dir / "requirements.txt",
     }
-
     for file_name, path in optional_files.items():
         if path.exists():
-            files.append(
-                (
-                    file_name.replace(".", "_"),
-                    (file_name, open(path, "rb"), "application/octet-stream"),
-                )
-            )
+            files_to_upload.append((file_name, path, "project"))
 
-    # Add Dockerfile.* files for local/ docker images
+    # Dockerfiles
     for dockerfile_path in dir.glob("Dockerfile.*"):
-        file_name = dockerfile_path.name
-        click.echo(f"  Found Dockerfile: {file_name}")
-        files.append(
-            (
-                file_name.replace(".", "_"),
-                (file_name, open(dockerfile_path, "rb"), "application/octet-stream"),
-            )
+        files_to_upload.append((dockerfile_path.name, dockerfile_path, "project"))
+
+    # Check for images/ directory (VLM datasets)
+    images_dir = dir / "images"
+    has_images = images_dir.exists() and images_dir.is_dir()
+
+    # Upload all files directly to S3
+    spinner.start()
+    s3_keys = []
+    try:
+        # Try STS session first for faster direct uploads
+        upload_session = get_upload_session(
+            base_url,
+            config.project_id,
+            project_version_id,
+            config.dataset_id,
+            dataset_version_id,
         )
+
+        if upload_session:
+            # Fast path: Use boto3 with temporary credentials
+            # Prepare files: (filename, path, prefix_type)
+            boto3_files = []
+            for file_name, path, target in files_to_upload:
+                boto3_files.append((file_name, path, target))
+
+            if boto3_files:
+                s3_keys = upload_with_boto3(upload_session, boto3_files)
+
+            # Upload images directory if exists
+            if has_images:
+                spinner.stop()
+                click.echo(click.style("Uploading images...", dim=True))
+                spinner.start()
+                image_keys, image_count = upload_directory_with_boto3(
+                    upload_session, images_dir, "project", subdir="images"
+                )
+                if image_keys:
+                    s3_keys.extend(image_keys)
+                    spinner.stop()
+                    click.echo(f"  Uploaded {image_count} images")
+                    spinner.start()
+        else:
+            # Fallback: Use presigned URLs (STS not configured)
+            # Prepare files for parallel upload: (filename, path, entity_id, version_id, upload_type)
+            parallel_files = []
+            for file_name, path, target in files_to_upload:
+                if target == "project":
+                    parallel_files.append(
+                        (file_name, path, config.project_id, project_version_id, "project")
+                    )
+                else:
+                    parallel_files.append(
+                        (file_name, path, config.dataset_id, dataset_version_id, "dataset")
+                    )
+
+            # Upload all files in parallel
+            if parallel_files:
+                s3_keys = upload_files_parallel_sync(base_url, parallel_files)
+
+            # Upload images individually if images/ directory exists
+            if has_images:
+                spinner.stop()
+                click.echo(click.style("Uploading images...", dim=True))
+                spinner.start()
+                image_keys, image_count = upload_images_parallel_sync(
+                    base_url, images_dir, config.project_id, project_version_id
+                )
+                if image_keys:
+                    s3_keys.extend(image_keys)
+                    spinner.stop()
+                    click.echo(f"  Uploaded {image_count} images")
+                    spinner.start()
+
+    except Exception as e:
+        spinner.stop()
+        raise click.ClickException(f"Failed to upload files to S3: {e}")
+
+    # No multipart files needed - everything is in S3
+    files = []
 
     # For multipart, we need to omit Content-Type so requests sets the boundary
     headers = auth.get_auth_headers()
@@ -2166,13 +2224,12 @@ def run(
         "project_id": config.project_id,
         "dataset_id": config.dataset_id,
         "organization_id": config.organization_id,
+        # Pass version IDs so backend knows files are already in S3
+        "project_version_id": project_version_id,
+        "dataset_version_id": dataset_version_id,
     }
     if name:
         submit_data["run_name"] = name
-
-    # Add dataset URL if uploaded to blob
-    if dataset_url:
-        submit_data["dataset_url"] = dataset_url
 
     # Add debug flag if set
     if debug:

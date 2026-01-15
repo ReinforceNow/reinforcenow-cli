@@ -100,7 +100,7 @@ class Message(BaseModel):
     model_config = ConfigDict(extra="allow")  # Allow extra fields like tool_calls
 
     role: Literal["system", "user", "assistant", "tool"]
-    content: str
+    content: str | list  # str for text, list for multimodal (VLM images)
 
 
 class TrainEntry(BaseModel):
@@ -165,7 +165,38 @@ class Organizations(BaseModel):
     active_organization_id: str | None = None
 
 
-# Supported model IDs
+# Supported model IDs (as set for runtime validation)
+SUPPORTED_MODELS_SET: set[str] = {
+    # Qwen models (text)
+    "Qwen/Qwen3-235B-A22B-Instruct-2507",
+    "Qwen/Qwen3-30B-A3B-Instruct-2507",
+    "Qwen/Qwen3-30B-A3B",
+    "Qwen/Qwen3-30B-A3B-Base",
+    "Qwen/Qwen3-32B",
+    "Qwen/Qwen3-8B",
+    "Qwen/Qwen3-8B-Base",
+    "Qwen/Qwen3-4B-Instruct-2507",
+    # Qwen models (vision)
+    "Qwen/Qwen3-VL-235B-A22B-Instruct",
+    "Qwen/Qwen3-VL-30B-A3B-Instruct",
+    # OpenAI models (reasoning)
+    "openai/gpt-oss-120b",
+    "openai/gpt-oss-20b",
+    # DeepSeek models
+    "deepseek-ai/DeepSeek-V3.1",
+    "deepseek-ai/DeepSeek-V3.1-Base",
+    # Meta Llama models
+    "meta-llama/Llama-3.1-70B",
+    "meta-llama/Llama-3.3-70B-Instruct",
+    "meta-llama/Llama-3.1-8B",
+    "meta-llama/Llama-3.1-8B-Instruct",
+    "meta-llama/Llama-3.2-3B",
+    "meta-llama/Llama-3.2-1B",
+    # Moonshot models (reasoning)
+    "moonshotai/Kimi-K2-Thinking",
+}
+
+# Type alias for supported models (for type hints)
 SUPPORTED_MODELS = Literal[
     # Qwen models (text)
     "Qwen/Qwen3-235B-A22B-Instruct-2507",
@@ -392,10 +423,18 @@ class ProjectConfig(BaseModel):
             self.algorithm = None
             self.rollout = None
 
-        # Validate qlora_rank against model-specific limits
-        # Only validate for known models (model IDs for finetuned models are validated server-side)
+        # Validate model path and qlora_rank
+        # Only validate for standard model paths (model IDs for finetuned models are validated server-side)
         model_path = self.model.path
         if "/" in model_path:  # Standard model path (not a model ID)
+            # Check if model is supported
+            if model_path not in SUPPORTED_MODELS_SET:
+                raise ValueError(
+                    f"Unsupported model: {model_path}. "
+                    f"Supported models: {', '.join(sorted(SUPPORTED_MODELS_SET))}"
+                )
+
+            # Validate qlora_rank against model-specific limits
             max_rank = get_max_lora_rank(model_path)
             if self.model.qlora_rank > max_rank:
                 raise ValueError(
