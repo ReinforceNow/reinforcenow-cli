@@ -14,7 +14,7 @@ name = "rnow"
 version = "0.3.16"
 description = "ReinforceNow CLI - Reinforcement Learning platform command-line interface"
 readme = "README.md"
-requires-python = ">=3.10,<3.15"
+requires-python = ">=3.11,<3.15"
 dependencies = [
     # Core CLI deps - lightweight, cross-platform
     "click>=8.0.0",
@@ -27,6 +27,8 @@ dependencies = [
     # Tokenizers for accurate token counting
     "tokenizers>=0.15.0",
     "openai-harmony>=0.0.8",
+    # AWS S3 uploads via STS
+    "boto3>=1.28.0",
 ]
 
 [project.optional-dependencies]

@@ -57,8 +57,6 @@ from rnow.cli.cube import CubeSpinner
 from rnow.cli.upload import (
     get_upload_session,
     upload_directory_with_boto3,
-    upload_files_parallel_sync,
-    upload_images_parallel_sync,
     upload_with_boto3,
 )
 
@@ -2140,11 +2138,11 @@ def run(
     images_dir = dir / "images"
     has_images = images_dir.exists() and images_dir.is_dir()
 
-    # Upload all files directly to S3
+    # Upload all files directly to S3 using STS credentials
     spinner.start()
     s3_keys = []
     try:
-        # Try STS session first for faster direct uploads
+        # Get STS session for direct S3 upload
         upload_session = get_upload_session(
             base_url,
             config.project_id,
@@ -2153,60 +2151,24 @@ def run(
             dataset_version_id,
         )
 
-        if upload_session:
-            # Fast path: Use boto3 with temporary credentials
-            # Prepare files: (filename, path, prefix_type)
-            boto3_files = []
-            for file_name, path, target in files_to_upload:
-                boto3_files.append((file_name, path, target))
+        # Upload files with boto3
+        boto3_files = [(file_name, path, target) for file_name, path, target in files_to_upload]
+        if boto3_files:
+            s3_keys = upload_with_boto3(upload_session, boto3_files)
 
-            if boto3_files:
-                s3_keys = upload_with_boto3(upload_session, boto3_files)
-
-            # Upload images directory if exists
-            if has_images:
+        # Upload images directory if exists
+        if has_images:
+            spinner.stop()
+            click.echo(click.style("Uploading images...", dim=True))
+            spinner.start()
+            image_keys, image_count = upload_directory_with_boto3(
+                upload_session, images_dir, "project", subdir="images"
+            )
+            if image_keys:
+                s3_keys.extend(image_keys)
                 spinner.stop()
-                click.echo(click.style("Uploading images...", dim=True))
+                click.echo(f"  Uploaded {image_count} images")
                 spinner.start()
-                image_keys, image_count = upload_directory_with_boto3(
-                    upload_session, images_dir, "project", subdir="images"
-                )
-                if image_keys:
-                    s3_keys.extend(image_keys)
-                    spinner.stop()
-                    click.echo(f"  Uploaded {image_count} images")
-                    spinner.start()
-        else:
-            # Fallback: Use presigned URLs (STS not configured)
-            # Prepare files for parallel upload: (filename, path, entity_id, version_id, upload_type)
-            parallel_files = []
-            for file_name, path, target in files_to_upload:
-                if target == "project":
-                    parallel_files.append(
-                        (file_name, path, config.project_id, project_version_id, "project")
-                    )
-                else:
-                    parallel_files.append(
-                        (file_name, path, config.dataset_id, dataset_version_id, "dataset")
-                    )
-
-            # Upload all files in parallel
-            if parallel_files:
-                s3_keys = upload_files_parallel_sync(base_url, parallel_files)
-
-            # Upload images individually if images/ directory exists
-            if has_images:
-                spinner.stop()
-                click.echo(click.style("Uploading images...", dim=True))
-                spinner.start()
-                image_keys, image_count = upload_images_parallel_sync(
-                    base_url, images_dir, config.project_id, project_version_id
-                )
-                if image_keys:
-                    s3_keys.extend(image_keys)
-                    spinner.stop()
-                    click.echo(f"  Uploaded {image_count} images")
-                    spinner.start()
 
     except Exception as e:
         spinner.stop()
