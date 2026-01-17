@@ -1,0 +1,23 @@
+project_name: "ConvFinQA - Conversational Financial QA"
+dataset_type: rl
+
+data:
+  train_file: train.jsonl
+  batch_size: 16
+  group_size: 8
+
+model:
+  path: Qwen/Qwen3-8B
+  qlora_rank: 32
+
+algorithm:
+  loss_fn: ppo
+  adv_estimator: grpo
+
+rollout:
+  max_turns: 1
+  max_tokens: 4096
+
+trainer:
+  num_epochs: 3
+  learning_rate: 0.0001
