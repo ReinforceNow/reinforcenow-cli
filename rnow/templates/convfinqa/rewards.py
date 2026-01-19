@@ -10,8 +10,9 @@ def accuracy(args: RewardArgs, messages: list) -> float:
     prompt = (
         f"Expected: {expected}\n"
         f"Model: {model_answer}\n\n"
-        "Match? (15.4%=15.4, -13.3% → 13.3 drop; no approximations)\n"
-        "Answer 1 or 0."
+        "Is the model's final answer mathematically equal to expected? "
+        "Ignore formatting (\\boxed, LaTeX). Equivalent forms count (1/2=0.5=50%). "
+        "Answer only: Yes or No"
     )
 
     return llm_judge(prompt)

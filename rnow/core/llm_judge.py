@@ -1,15 +1,29 @@
 """
-LLM Judge - Use an LLM to evaluate responses.
+LLM Judge - Use an LLM to evaluate responses with structured outputs.
 
-Provides a simple LLM judge that takes a prompt and returns a score.
-Supports any OpenAI-compatible API endpoint.
+Provides an LLM judge that uses OpenAI's structured outputs feature
+to reliably return scores. Always uses structured outputs for guaranteed
+valid responses.
 """
 
 import os
-import re
 from typing import Any
 
 import requests
+
+# Default schema: binary 0/1 score
+DEFAULT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "score": {
+            "type": "integer",
+            "enum": [0, 1],
+            "description": "1 if the response meets the criteria, 0 otherwise",
+        }
+    },
+    "required": ["score"],
+    "additionalProperties": False,
+}
 
 
 def llm_judge(
@@ -18,34 +32,60 @@ def llm_judge(
     api_url: str | None = None,
     api_key: str | None = None,
     secrets: dict[str, Any] | None = None,
-    model: str = "gpt-4o-mini",
+    model: str = "gpt-5.2-nano",
     temperature: float = 0.0,
-    max_tokens: int = 10,
+    max_tokens: int = 50,
     timeout: int = 60,
+    schema: dict | None = None,
+    score_key: str = "score",
     **kwargs: Any,
 ) -> float:
     """
-    Send a prompt to an LLM and parse the response as a score.
+    Send a prompt to an LLM and get a score using structured outputs.
+
+    Always uses OpenAI's structured outputs to guarantee a valid JSON response.
+    By default returns 0 or 1, but you can provide a custom schema.
 
     Args:
-        prompt: The prompt to send to the LLM
+        prompt: The prompt to send to the LLM (should ask for a score)
         api_url: OpenAI-compatible API endpoint (default: OpenAI)
         api_key: API key (takes priority over secrets/env)
         secrets: Dict of secrets (e.g., args.secrets) - checks for OPENAI_API_KEY
-        model: Model to use (default: gpt-4o-mini)
+        model: Model to use (default: gpt-5.2-nano)
         temperature: Sampling temperature (default: 0.0)
-        max_tokens: Max tokens in response (default: 10)
+        max_tokens: Max tokens in response (default: 50)
         timeout: Request timeout in seconds (default: 60)
+        schema: Custom JSON schema for structured output (default: binary 0/1)
+        score_key: Key to extract score from response (default: "score")
         **kwargs: Additional parameters to pass to the API
 
     Returns:
         Float between 0.0 and 1.0
 
-    Example:
-        @reward(timeout=120)
-        def accuracy(args: RewardArgs, messages: list) -> float:
-            prompt = f"Expected: {args.metadata['answer']}\\nModel: {get_response(messages)}\\nMatch? Answer 1 or 0."
+    Example (default 0/1 scoring):
+        @reward
+        def quality(args: RewardArgs, messages: list) -> float:
+            response = get_response(messages)
+            prompt = f"Is this response helpful? Answer 1 or 0.\\n\\n{response}"
             return llm_judge(prompt, secrets=args.secrets)
+
+    Example (custom schema with 0-10 scale):
+        @reward
+        def detailed_quality(args: RewardArgs, messages: list) -> float:
+            custom_schema = {
+                "type": "object",
+                "properties": {
+                    "reasoning": {"type": "string"},
+                    "score": {"type": "integer", "minimum": 0, "maximum": 10}
+                },
+                "required": ["reasoning", "score"],
+                "additionalProperties": False
+            }
+            return llm_judge(
+                prompt,
+                secrets=args.secrets,
+                schema=custom_schema,
+            ) / 10.0  # Normalize to 0-1
     """
     url = api_url or os.environ.get(
         "LLM_JUDGE_API_URL", "https://api.openai.com/v1/chat/completions"
@@ -59,23 +99,23 @@ def llm_judge(
         key = os.environ.get("LLM_JUDGE_API_KEY") or os.environ.get("OPENAI_API_KEY")
 
     if not key:
-        # Debug: print available env vars that might contain API keys
-        env_keys = [
-            k
-            for k in os.environ
-            if "API" in k.upper() or "KEY" in k.upper() or "OPENAI" in k.upper()
-        ]
-        print(f"[llm_judge DEBUG] No API key found. Relevant env vars: {env_keys}")
-        print(f"[llm_judge DEBUG] OPENAI_API_KEY in env: {'OPENAI_API_KEY' in os.environ}")
         raise ValueError(
             "No API key provided. Pass api_key, secrets=args.secrets, or set OPENAI_API_KEY env var."
         )
 
+    # Use custom schema or default binary schema
+    output_schema = schema or DEFAULT_SCHEMA
+
+    # Build the request payload with structured outputs
     payload = {
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
         "temperature": temperature,
         "max_tokens": max_tokens,
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {"name": "judge_score", "strict": True, "schema": output_schema},
+        },
         **kwargs,
     }
 
@@ -88,40 +128,35 @@ def llm_judge(
     resp.raise_for_status()
 
     data = resp.json()
+    return _parse_structured_response(data, score_key)
+
+
+def _parse_structured_response(data: dict, score_key: str = "score") -> float:
+    """Parse structured output response (JSON with score field)."""
+    import json
 
     # Standard OpenAI chat completion format
     if "choices" in data:
-        text = data["choices"][0]["message"]["content"].strip()
+        text = data["choices"][0]["message"]["content"]
+        try:
+            parsed = json.loads(text)
+            score = parsed.get(score_key, 0)
+            return float(score)
+        except (json.JSONDecodeError, TypeError, KeyError, ValueError):
+            return 0.0
+
     # OpenAI responses API format
-    elif "output" in data:
-        output = data["output"]
-        text = next((x["content"][0]["text"] for x in output if x.get("type") == "message"), "0")
-    else:
-        raise ValueError(f"Unexpected API response format: {data}")
-
-    return _parse_score(text)
-
-
-def _parse_score(text: str) -> float:
-    """Parse a numeric score from LLM output."""
-    text = text.strip()
-
-    try:
-        score = float(text)
-        return max(0.0, min(1.0, score))
-    except ValueError:
-        pass
-
-    match = re.search(r"(\d+\.?\d*)", text)
-    if match:
-        score = float(match.group(1))
-        if score > 1:
-            score = score / 100
-        return max(0.0, min(1.0, score))
-
-    if text.lower() in ("1", "yes", "true", "correct"):
-        return 1.0
-    if text.lower() in ("0", "no", "false", "incorrect"):
+    if "output" in data:
+        for item in data["output"]:
+            if item.get("type") == "message":
+                for content in item.get("content", []):
+                    if content.get("type") == "text":
+                        try:
+                            parsed = json.loads(content["text"])
+                            score = parsed.get(score_key, 0)
+                            return float(score)
+                        except (json.JSONDecodeError, TypeError, KeyError, ValueError):
+                            pass
         return 0.0
 
-    return 0.0
+    raise ValueError(f"Unexpected API response format: {data}")
