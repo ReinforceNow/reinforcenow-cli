@@ -374,7 +374,7 @@ def fetch_mcp_tool_schemas(
         if not success:
             return [], error_msg or "connection failed"
 
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return [], f"timeout after {timeout}s"
     except Exception as e:
         return [], str(e)
@@ -1094,6 +1094,7 @@ def orgs(ctx, org_id: str | None):
             "deepseek-aha",
             "finqa",
             "convfinqa",
+            "quantqa",
             "adaptllm-finance",
             "food-extract",
             "tutorial-reward",
@@ -1138,6 +1139,7 @@ def init(template: str, name: str):
         "deepseek-aha": "deepseek-aha",
         "finqa": "finqa-project",
         "convfinqa": "convfinqa-project",
+        "quantqa": "quantqa-project",
         "adaptllm-finance": "adaptllm-finance-project",
         "food-extract": "food-extract-project",
         "web-tasks": "web-tasks",

@@ -5,10 +5,12 @@ Users only need:
 - @reward decorator for defining reward functions
 - @tool decorator for defining tool functions
 - RewardArgs for type hints in reward functions
+- llm_judge for LLM-as-a-judge evaluation
 """
 
 from rnow.models import RewardArgs, get_response
 
+from .llm_judge import llm_judge
 from .reward import (
     REWARD_REGISTRY,
     clear_reward_registry,
@@ -25,6 +27,7 @@ __all__ = [
     "tool",
     "RewardArgs",
     "get_response",
+    "llm_judge",
     # Registries (used by CLI and trainer)
     "REWARD_REGISTRY",
     "TOOL_REGISTRY",
