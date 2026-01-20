@@ -910,6 +910,10 @@ def _interactive_org_selector(organizations: list, active_org_id: str | None) ->
     """Interactive organization selector using arrow keys."""
     import sys
 
+    # Check for TTY - if not in TTY, return None (caller will handle)
+    if not sys.stdin.isatty():
+        return None
+
     # Find initial selection index
     selected_idx = 0
     for i, org in enumerate(organizations):
@@ -1059,6 +1063,18 @@ def orgs(ctx, org_id: str | None):
 
     # Show interactive selector
     selected_org_id = _interactive_org_selector(orgs_data.organizations, active_org_id)
+
+    # Handle non-TTY mode (e.g., running from Claude Code)
+    if selected_org_id is None:
+        click.echo("Interactive selection requires a terminal.")
+        click.echo()
+        click.echo("Available organizations:")
+        for org in orgs_data.organizations:
+            marker = "✓ " if org.id == active_org_id else "  "
+            click.echo(f"  {marker}{org.id} ({org.name})")
+        click.echo()
+        click.echo("Use: rnow orgs <ORG_ID>")
+        return
 
     if selected_org_id and selected_org_id != active_org_id:
         auth.set_active_organization(selected_org_id)
@@ -2478,13 +2494,23 @@ def download(ctx, model_id: str, output: Path, keep_archive: bool):
 
 @click.command()
 @click.argument("run_id", required=True)
-@click.confirmation_option(prompt="Are you sure you want to stop this training run?")
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation (auto-enabled in non-TTY)")
 @click.pass_context
-def stop(ctx, run_id: str):
+def stop(ctx, run_id: str, yes: bool):
     """Stop an active training run.
 
     Requires the RUN_ID obtained from 'rnow run' command.
     """
+    import sys
+
+    # Confirm unless --yes flag or non-TTY
+    if (
+        not yes
+        and sys.stdin.isatty()
+        and not click.confirm("Are you sure you want to stop this training run?")
+    ):
+        raise click.Abort()
+
     base_url = ctx.obj.get("api_url", "https://www.reinforcenow.ai/api")
 
     try:
