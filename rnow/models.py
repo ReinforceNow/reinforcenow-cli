@@ -76,7 +76,8 @@ def get_response(messages: list) -> str:
     """Extract text content from the last assistant message.
 
     Handles both string and list content (tinker's ContentPart format).
-    Use this in reward functions to safely get the model's response.
+    Only returns "text" type parts - thinking/reasoning is excluded to avoid
+    intermediate \boxed{} expressions confusing parsers like math-verify.
 
     Example:
         @reward
@@ -87,6 +88,11 @@ def get_response(messages: list) -> str:
     content = messages[-1].get("content", "") if messages else ""
     if isinstance(content, list):
         # tinker's ContentPart format: [{type: "thinking", thinking: "..."}, {type: "text", text: "..."}]
+        # Only extract "text" type parts - skip "thinking" parts which contain intermediate reasoning
+        text_parts = [p.get("text", "") for p in content if p.get("type") == "text"]
+        if text_parts:
+            return "".join(text_parts)
+        # Fallback for backwards compatibility: if no text parts, return all content
         return "".join(p.get("text", "") or p.get("thinking", "") for p in content)
     return content or ""
 
