@@ -1100,6 +1100,7 @@ def orgs(ctx, org_id: str | None):
     type=click.Choice(
         [
             "start",
+            "first-rl",
             "new",
             "blank",
             "sft",
@@ -1150,6 +1151,7 @@ def init(template: str, name: str, dataset: str, yes: bool):
 
     # Default project names based on template
     template_default_names = {
+        "first-rl": "my-project",
         "rl-single": "rl-project",
         "rl-tools": "rl-tools-project",
         "rl-nextjs": "nextjs-project",
@@ -1238,7 +1240,7 @@ def init(template: str, name: str, dataset: str, yes: bool):
                 shutil.copy2(file, dest_file)
 
             # Copy shared .claude directory with skills (for Claude Code)
-            shared_claude_dir = Path(__file__).parent.parent / "templates" / "_shared" / ".claude"
+            shared_claude_dir = Path(__file__).parent.parent.parent / ".claude"
             if shared_claude_dir.exists():
                 dest_claude_dir = project_dir / ".claude"
                 if dest_claude_dir.exists():
@@ -1251,7 +1253,7 @@ def init(template: str, name: str, dataset: str, yes: bool):
             )
     else:
         # For blank template, still copy the .claude skills directory
-        shared_claude_dir = Path(__file__).parent.parent / "templates" / "_shared" / ".claude"
+        shared_claude_dir = Path(__file__).parent.parent.parent / ".claude"
         if shared_claude_dir.exists():
             dest_claude_dir = project_dir / ".claude"
             if dest_claude_dir.exists():

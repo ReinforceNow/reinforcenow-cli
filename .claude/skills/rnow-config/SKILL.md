@@ -474,6 +474,52 @@ trainer:
 5. **sandbox=True requires docker field**
 6. **max_tokens must fit in context window**
 
+## Quick Reference: All Literal Field Options
+
+### dataset_type (required)
+| Value | Description |
+|-------|-------------|
+| `rl` | Reinforcement Learning - requires rewards.py |
+| `sft` | Supervised Fine-Tuning - no rewards needed |
+
+### algorithm.loss_fn (RL only)
+| Value | Description |
+|-------|-------------|
+| `ppo` | Proximal Policy Optimization (default, recommended) |
+| `importance_sampling` | Alternative loss function |
+
+### algorithm.adv_estimator (RL only)
+| Value | Description |
+|-------|-------------|
+| `grpo` | Group Relative Policy Optimization (default, recommended) |
+| `gae` | Generalized Advantage Estimation |
+| `reinforce` | REINFORCE algorithm |
+
+### rollout.termination_policy (RL only)
+| Value | Description |
+|-------|-------------|
+| `last_tool` | Episode ends when model responds without tool call (default) |
+| `max_turns` | Episode always runs for exactly max_turns |
+
+### rollout.thinking_mode (RL only)
+| Value | Description |
+|-------|-------------|
+| `null` | Auto-enable for supported models (default) |
+| `disabled` | Explicitly disable reasoning |
+| `easy` | Light reasoning |
+| `medium` | Moderate reasoning |
+| `hard` | Deep reasoning (uses more tokens) |
+
+### messages[].role (train.jsonl)
+| Value | Description |
+|-------|-------------|
+| `system` | System instructions (optional, must be first if present) |
+| `user` | User message (at least one required) |
+| `assistant` | Assistant response (for multi-turn context) |
+| `tool` | Tool call result (for tool use context) |
+
+---
+
 ## Testing Configuration
 
 ```bash

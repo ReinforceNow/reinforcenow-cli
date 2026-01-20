@@ -124,6 +124,7 @@ rnow init [OPTIONS]
 | Template | Type | Description |
 |----------|------|-------------|
 | `start` | RL | Default single-turn RL (alias for rl-single) |
+| `first-rl` | RL | Config only - for first-time users with Claude Code |
 | `rl-single` | RL | Single-turn with math reasoning |
 | `rl-tools` | RL | Multi-turn with tool calling |
 | `sft` | SFT | Supervised finetuning |
@@ -182,17 +183,31 @@ rnow run [OPTIONS]
 - `tools.py` - Tool definitions
 - `requirements.txt` - Python dependencies
 
-**Example:**
-```bash
-cd my-project
-rnow run
-
-# Output:
-# Validating project...
-# Uploading files...
-# Starting run: run_abc123xyz
-# View at: https://www.reinforcenow.ai/runs/run_abc123xyz
+**CLI Output:**
 ```
+Run started successfully ✅
+  Project: Math Reasoning
+  Model: Qwen/Qwen3-8B (thinking: medium)
+  Run ID: run_abc123xyz
+
+View your experiment here:
+https://www.reinforcenow.ai/runs/run_abc123xyz
+```
+
+### How to Respond After Starting a Run
+
+When you run `rnow run` and it succeeds, tell the user:
+
+1. **Confirm success** - The run has started
+2. **Share the dashboard link** - Where they can monitor progress
+3. **Set expectations** - Training takes time, they can watch metrics live
+
+**Example response:**
+
+> Your training run has started! You can monitor its progress here:
+> https://www.reinforcenow.ai/runs/run_abc123xyz
+>
+> The dashboard will show live metrics, reward curves, and sample outputs as training progresses. Training typically takes 30 minutes to several hours depending on your dataset size and configuration.
 
 ### Multi-Model Training
 

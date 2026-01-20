@@ -118,7 +118,7 @@ async def math_accuracy(args: RewardArgs, messages: list) -> float:
 
 Add to requirements.txt:
 ```
-math-verify
+math-verify==0.5.0
 ```
 
 ### 5. JSON Structure Validation
@@ -244,7 +244,16 @@ train.jsonl entry:
 
 ## LLM Judge
 
-Use another LLM to evaluate responses:
+Use another LLM to evaluate responses.
+
+**IMPORTANT: Requires OPENAI_API_KEY**
+
+Create a `.env` file in your project directory:
+```
+OPENAI_API_KEY=sk-your-api-key-here
+```
+
+Your secrets are encrypted and securely stored in the ReinforceNow platform. They are never logged or exposed.
 
 ```python
 from rnow.core import llm_judge
