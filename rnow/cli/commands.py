@@ -1108,7 +1108,6 @@ def orgs(ctx, org_id: str | None):
 @click.option("--name", "-n", help="Project name (will prompt if not provided)")
 def init(template: str, name: str):
     """Initialize a new ReinforceNow project."""
-    require_auth()
 
     import shutil
     from pathlib import Path
@@ -1213,11 +1212,27 @@ def init(template: str, name: str):
             for file in files_to_copy:
                 dest_file = project_dir / file.name
                 shutil.copy2(file, dest_file)
+
+            # Copy shared .claude directory with skills (for Claude Code)
+            shared_claude_dir = Path(__file__).parent.parent / "templates" / "_shared" / ".claude"
+            if shared_claude_dir.exists():
+                dest_claude_dir = project_dir / ".claude"
+                if dest_claude_dir.exists():
+                    shutil.rmtree(dest_claude_dir)
+                shutil.copytree(shared_claude_dir, dest_claude_dir)
         else:
             click.echo(
                 click.style("Template not found:", bold=True)
                 + click.style(f" {template}, using blank template", dim=True)
             )
+    else:
+        # For blank template, still copy the .claude skills directory
+        shared_claude_dir = Path(__file__).parent.parent / "templates" / "_shared" / ".claude"
+        if shared_claude_dir.exists():
+            dest_claude_dir = project_dir / ".claude"
+            if dest_claude_dir.exists():
+                shutil.rmtree(dest_claude_dir)
+            shutil.copytree(shared_claude_dir, dest_claude_dir)
 
     # Generate new IDs
     project_id = str(uuid.uuid4())
