@@ -1106,10 +1106,13 @@ def orgs(ctx, org_id: str | None):
     help="Project template to use",
 )
 @click.option("--name", "-n", help="Project name (will prompt if not provided)")
-def init(template: str, name: str):
+@click.option("--dataset", "-d", help="Dataset name (will prompt if not provided)")
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmations (auto-enabled in non-TTY)")
+def init(template: str, name: str, dataset: str, yes: bool):
     """Initialize a new ReinforceNow project."""
 
     import shutil
+    import sys
     from pathlib import Path
 
     from prompt_toolkit import prompt as pt_prompt
@@ -1117,6 +1120,9 @@ def init(template: str, name: str):
 
     def styled_prompt(question: str, default: str) -> str:
         """Next.js style prompt with placeholder that disappears on typing."""
+        # If not running in a TTY (e.g., from Claude Code), use defaults
+        if not sys.stdin.isatty():
+            return default
         result = pt_prompt(
             HTML(f"<b>{question}</b> <gray>›</gray> "),
             placeholder=HTML(f"<gray>{default}</gray>"),
@@ -1153,7 +1159,7 @@ def init(template: str, name: str):
     )
 
     # Dataset name prompt
-    dataset_name = styled_prompt("What is your dataset named?", "train")
+    dataset_name = dataset if dataset else styled_prompt("What is your dataset named?", "train")
 
     # Create project directory in current location
     project_dir = Path(".")
@@ -1193,16 +1199,18 @@ def init(template: str, name: str):
                     click.style("Files to modify:", bold=True)
                     + click.style(f" {', '.join(all_affected)}", dim=True)
                 )
-                confirm_prompt = (
-                    click.style("Continue?", bold=True)
-                    + " ("
-                    + click.style("yes", dim=True)
-                    + "/no)"
-                )
-                if not click.confirm(
-                    confirm_prompt, default=True, show_default=False, prompt_suffix=" "
-                ):
-                    raise click.Abort()
+                # Skip confirmation in non-TTY mode or if --yes flag is passed
+                if not yes and sys.stdin.isatty():
+                    confirm_prompt = (
+                        click.style("Continue?", bold=True)
+                        + " ("
+                        + click.style("yes", dim=True)
+                        + "/no)"
+                    )
+                    if not click.confirm(
+                        confirm_prompt, default=True, show_default=False, prompt_suffix=" "
+                    ):
+                        raise click.Abort()
 
             # Remove extra template files (silently)
             for fname in extra_files:
