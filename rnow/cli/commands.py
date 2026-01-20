@@ -1242,10 +1242,11 @@ def init(template: str, name: str, dataset: str, yes: bool):
             # Copy Claude Code files (CLAUDE.md to root, skills to .claude/)
             shared_claude_dir = Path(__file__).parent.parent.parent / ".claude"
             if shared_claude_dir.exists():
-                # Copy CLAUDE.md to project root (where Claude Code expects it)
-                source_claude_md = shared_claude_dir / "CLAUDE.md"
-                if source_claude_md.exists():
-                    shutil.copy2(source_claude_md, project_dir / "CLAUDE.md")
+                # Only copy general CLAUDE.md if template didn't have one
+                if not (project_dir / "CLAUDE.md").exists():
+                    source_claude_md = shared_claude_dir / "CLAUDE.md"
+                    if source_claude_md.exists():
+                        shutil.copy2(source_claude_md, project_dir / "CLAUDE.md")
                 # Copy skills directory to .claude/skills/
                 source_skills_dir = shared_claude_dir / "skills"
                 if source_skills_dir.exists():

@@ -19,7 +19,7 @@ algorithm:
   kl_penalty_coef: 0.01
 rollout:
   max_turns: 1
-  max_tokens: 4096
+  max_tokens: 16000
   termination_policy: last_tool
 trainer:
   num_epochs: 6

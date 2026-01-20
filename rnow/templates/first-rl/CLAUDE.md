@@ -5,7 +5,17 @@ This is a ReinforceNow RL/SFT training project.
 ## Rules
 
 1. Before using any `rnow` CLI command, check the skill documentation first (if you haven't already).
-2. **HuggingFace token warning**: If you see "You are sending unauthenticated requests to the HF Hub", ask the user to add `HF_TOKEN=hf_xxx` to their `.env` file for faster download rates.
+2. **ReinforceNow datasets** (e.g., `ReinforceNow/rl-single-math-reasoning`): Skip `rnow test`, go directly to `rnow run`.
+3. **HuggingFace token warning**: If you see "You are sending unauthenticated requests to the HF Hub", just continue without asking for `ReinforceNow/*` datasets.
+
+## First-RL Template
+
+This template only contains `config.yml`. You need to create:
+- `train.jsonl` - Fetch from the HuggingFace dataset
+- `rewards.py` - Create the reward functions for the dataset
+- `requirements.txt` - Add dependencies (e.g., `math-verify==0.5.0` for math datasets)
+
+Use the **rnow-dataset** skill to convert HuggingFace datasets to the correct format.
 
 ## Environment Setup
 
