@@ -4,8 +4,11 @@ from rnow.core import RewardArgs, get_response, reward
 
 
 @reward
-def accuracy(args: RewardArgs, messages: list) -> float:
-    """Verify numerical answer using math_verify."""
+async def accuracy(args: RewardArgs, messages: list) -> float:
+    """Verify numerical answer using math_verify.
+
+    NOTE: Must be async - math-verify/antlr4 is NOT thread-safe.
+    """
     gold = parse(args.metadata["answer"])
     response = get_response(messages)
 

@@ -3201,11 +3201,12 @@ wheels = [
 
 [[package]]
 name = "rnow"
-version = "0.4.5"
+version = "0.4.6"
 source = { editable = "." }
 dependencies = [
     { name = "boto3" },
     { name = "click" },
+    { name = "datasets" },
     { name = "httpx" },
     { name = "openai-harmony" },
     { name = "packaging" },
@@ -3240,6 +3241,7 @@ test = [
 requires-dist = [
     { name = "boto3", specifier = "==1.34.100" },
     { name = "click", specifier = ">=8.0.0" },
+    { name = "datasets" },
     { name = "fastapi", marker = "extra == 'all'", specifier = ">=0.68.0" },
     { name = "fastapi", marker = "extra == 'api'", specifier = ">=0.68.0" },
     { name = "fastmcp", marker = "extra == 'all'", specifier = ">=0.1.0" },

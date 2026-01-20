@@ -100,12 +100,17 @@ async def numerical_accuracy(args: RewardArgs, messages: list) -> float:
 
 ### 4. Math Verification (LaTeX)
 
+**IMPORTANT: Must use `async def`** - math-verify/antlr4 is NOT thread-safe. Sync functions run in a thread pool which causes sympy parsing to silently fail.
+
 ```python
 from math_verify import LatexExtractionConfig, parse, verify
 
 @reward
 async def math_accuracy(args: RewardArgs, messages: list) -> float:
-    """Verify mathematical equivalence using math-verify."""
+    """Verify mathematical equivalence using math-verify.
+
+    NOTE: Must be async - math-verify is NOT thread-safe.
+    """
     gold = parse(args.metadata["answer"])
     pred = parse(
         messages[-1]["content"],
@@ -338,20 +343,23 @@ The total reward is calculated based on preconditions:
 
 ## Async vs Sync
 
-Both work:
+Both work, but some libraries require async:
 
 ```python
-# Async (recommended for I/O operations)
+# Async (recommended - runs on main event loop)
 @reward
 async def my_async_reward(args: RewardArgs, messages: list) -> float:
     result = await some_async_operation()
     return result
 
-# Sync (simpler for pure computation)
+# Sync (runs in thread pool - simpler for pure computation)
 @reward
 def my_sync_reward(args: RewardArgs, messages: list) -> float:
     return 1.0 if condition else 0.0
 ```
+
+**IMPORTANT**: Some libraries are NOT thread-safe and MUST use `async def`:
+- `math-verify` / `latex2sympy2` / `antlr4` - sympy parsing fails silently in threads
 
 ## Common Mistakes
 

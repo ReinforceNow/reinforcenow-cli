@@ -2,7 +2,7 @@ from rnow.core import RewardArgs, get_response, llm_judge, reward
 
 
 @reward(timeout=120)
-def accuracy(args: RewardArgs, messages: list) -> float:
+async def accuracy(args: RewardArgs, messages: list) -> float:
     """Judge if model's numerical answer matches expected."""
     expected = args.metadata["answer"]
     model_answer = get_response(messages)
