@@ -15,10 +15,12 @@ Dependencies are managed with **uv** (should already be installed with Python 3.
 # Install dependencies
 uv pip install -r requirements.txt
 
-# Run rnow commands
-uv run rnow test -n 3 --verbose
-uv run rnow run
+# Run rnow commands (use --active to ensure uv uses the local venv)
+uv run --active rnow test -n 3 --verbose
+uv run --active rnow run
 ```
+
+**Important:** Always use `uv run --active` to ensure uv uses the activated local `.venv` instead of a global environment. Without `--active`, uv may use an older rnow version from a different location.
 
 ## Project Files
 

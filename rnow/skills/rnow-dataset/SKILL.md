@@ -83,10 +83,12 @@ For RL, each line needs `messages`, `rewards`, and optionally `metadata`.
 ### Basic RL Structure
 
 ```json
-{"messages": [{"role": "user", "content": "Question"}], "rewards": ["accuracy"], "metadata": {"answer": "expected"}}
+{"messages": [{"role": "user", "content": "Question"}], "rewards": ["accuracy"], "metadata": {"expected_answer": "$\\frac{1}{2}$"}}
 ```
 
-**Important**: For RL, messages should only contain the prompt (user message). The model generates the assistant response during training.
+**Important**:
+- For RL, messages should only contain the prompt (user message). The model generates the assistant response during training.
+- **For math-verify**: `expected_answer` MUST have math delimiters (`$...$` or `\(...\)`). Raw LaTeX like `\sqrt{2}` won't parse - use `$\sqrt{2}$`. Plain numbers like `42` work as-is.
 
 ### Converting HuggingFace Dataset to RL
 
@@ -143,19 +145,25 @@ with open("train.jsonl", "w") as f:
 ```python
 from datasets import load_dataset
 import json
+import re
 
 dataset = load_dataset("hendrycks/competition_math", split="train")
 
+def extract_boxed(text: str) -> str:
+    match = re.search(r"\\boxed\{([^}]+)\}", text)
+    return match.group(1) if match else text
+
 with open("train.jsonl", "w") as f:
     for row in dataset:
+        answer = extract_boxed(row["solution"])
+        # Wrap in $$ for math-verify (skip if already has delimiters or is plain number)
+        if not answer.startswith(("$", "\\(")) and not answer.replace(".", "").replace("-", "").isdigit():
+            answer = f"$${answer}$$"
+
         entry = {
-            "messages": [
-                {"role": "user", "content": row["problem"]}
-            ],
+            "messages": [{"role": "user", "content": row["problem"]}],
             "rewards": ["accuracy"],
-            "metadata": {
-                "expected_answer": row["solution"]  # Contains LaTeX
-            }
+            "metadata": {"expected_answer": answer}
         }
         f.write(json.dumps(entry) + "\n")
 ```

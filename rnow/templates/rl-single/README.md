@@ -13,6 +13,16 @@ This is a **test dataset** compatible with the [ReinforceNow Platform](https://r
 
 > **Note:** This is not a production dataset. It contains a small subset of math problems for testing the ReinforceNow CLI and verifying your training pipeline works correctly before scaling up.
 
+## Data Format
+
+Each entry in `train.jsonl` follows this structure:
+
+```json
+{"messages": [{"role": "user", "content": "Problem..."}], "rewards": ["accuracy"], "metadata": {"expected_answer": "$\\frac{1}{2}$"}}
+```
+
+**Important:** All `expected_answer` values use proper math delimiters (`$...$` or `\(...\)`) for compatibility with `math-verify`. Plain numbers like `42` work as-is.
+
 ## Reward Function
 
 The dataset uses the `math-verify` library for accurate mathematical answer verification:

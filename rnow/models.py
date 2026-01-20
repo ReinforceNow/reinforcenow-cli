@@ -77,7 +77,7 @@ def get_response(messages: list) -> str:
 
     Handles both string and list content (tinker's ContentPart format).
     Only returns "text" type parts - thinking/reasoning is excluded to avoid
-    intermediate \boxed{} expressions confusing parsers like math-verify.
+    intermediate \\boxed{} expressions confusing parsers like math-verify.
 
     Example:
         @reward

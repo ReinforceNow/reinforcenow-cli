@@ -1239,38 +1239,8 @@ def init(template: str, name: str, dataset: str, yes: bool):
                 dest_file = project_dir / file.name
                 shutil.copy2(file, dest_file)
 
-            # Copy Claude Code files (CLAUDE.md to root, skills to .claude/)
-            shared_claude_dir = Path(__file__).parent.parent.parent / ".claude"
-            if shared_claude_dir.exists():
-                # Only copy general CLAUDE.md if template didn't have one
-                if not (project_dir / "CLAUDE.md").exists():
-                    source_claude_md = shared_claude_dir / "CLAUDE.md"
-                    if source_claude_md.exists():
-                        shutil.copy2(source_claude_md, project_dir / "CLAUDE.md")
-                # Copy skills directory to .claude/skills/
-                source_skills_dir = shared_claude_dir / "skills"
-                if source_skills_dir.exists():
-                    dest_claude_dir = project_dir / ".claude"
-                    dest_claude_dir.mkdir(exist_ok=True)
-                    dest_skills_dir = dest_claude_dir / "skills"
-                    if dest_skills_dir.exists():
-                        shutil.rmtree(dest_skills_dir)
-                    shutil.copytree(source_skills_dir, dest_skills_dir)
-        else:
-            click.echo(
-                click.style("Template not found:", bold=True)
-                + click.style(f" {template}, using blank template", dim=True)
-            )
-    else:
-        # For blank template, still copy Claude Code files
-        shared_claude_dir = Path(__file__).parent.parent.parent / ".claude"
-        if shared_claude_dir.exists():
-            # Copy CLAUDE.md to project root (where Claude Code expects it)
-            source_claude_md = shared_claude_dir / "CLAUDE.md"
-            if source_claude_md.exists():
-                shutil.copy2(source_claude_md, project_dir / "CLAUDE.md")
-            # Copy skills directory to .claude/skills/
-            source_skills_dir = shared_claude_dir / "skills"
+            # Copy skills directory to .claude/skills/ (skills are inside rnow package)
+            source_skills_dir = Path(__file__).parent.parent / "skills"
             if source_skills_dir.exists():
                 dest_claude_dir = project_dir / ".claude"
                 dest_claude_dir.mkdir(exist_ok=True)
@@ -1278,6 +1248,21 @@ def init(template: str, name: str, dataset: str, yes: bool):
                 if dest_skills_dir.exists():
                     shutil.rmtree(dest_skills_dir)
                 shutil.copytree(source_skills_dir, dest_skills_dir)
+        else:
+            click.echo(
+                click.style("Template not found:", bold=True)
+                + click.style(f" {template}, using blank template", dim=True)
+            )
+    else:
+        # For blank template, still copy skills
+        source_skills_dir = Path(__file__).parent.parent / "skills"
+        if source_skills_dir.exists():
+            dest_claude_dir = project_dir / ".claude"
+            dest_claude_dir.mkdir(exist_ok=True)
+            dest_skills_dir = dest_claude_dir / "skills"
+            if dest_skills_dir.exists():
+                shutil.rmtree(dest_skills_dir)
+            shutil.copytree(source_skills_dir, dest_skills_dir)
 
     # Generate new IDs
     project_id = str(uuid.uuid4())
