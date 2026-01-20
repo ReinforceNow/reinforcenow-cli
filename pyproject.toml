@@ -29,6 +29,8 @@ dependencies = [
     "openai-harmony>=0.0.8",
     # AWS S3 uploads via STS (pinned for aiobotocore compatibility)
     "boto3==1.34.100",
+    # HuggingFace datasets for loading training data
+    "datasets",
 ]
 
 [project.optional-dependencies]
