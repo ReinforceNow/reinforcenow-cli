@@ -2,14 +2,16 @@
 
 This is a ReinforceNow RL/SFT training project.
 
+## Rules
+
+1. Before using any `rnow` CLI command, check the skill documentation first (if you haven't already).
+2. **ReinforceNow datasets** (e.g., `ReinforceNow/rl-single-math-reasoning`): Skip `rnow test`, go directly to `rnow run`.
+
 ## Environment Setup
 
 Dependencies are managed with **uv** (should already be installed with Python 3.11).
 
 ```bash
-# Activate the virtual environment
-source .venv/bin/activate
-
 # Install dependencies
 uv pip install -r requirements.txt
 
@@ -25,28 +27,3 @@ uv run rnow run
 - `rewards.py` - Reward functions (RL only)
 - `tools.py` - Tool definitions (optional)
 - `requirements.txt` - Python dependencies (optional)
-
-## Quick Commands
-
-```bash
-# Test rollouts locally
-uv run rnow test -n 3 --verbose
-
-# Submit training run
-uv run rnow run
-
-# Check status
-uv run rnow status
-
-# Stop a run
-uv run rnow stop <RUN_ID>
-```
-
-## Skills Available
-
-Claude Code has access to ReinforceNow skills for:
-- **rnow-cli** - CLI commands and workflows
-- **rnow-config** - Configuration options for config.yml
-- **rnow-dataset** - Converting HuggingFace datasets to train.jsonl
-- **rnow-rewards** - Writing reward functions
-- **rnow-tools** - Writing tool functions

@@ -252,6 +252,10 @@ rnow stop run_abc123xyz
 
 Test RL rollouts locally before submitting.
 
+### Before Running rnow test
+
+**Check OPENAI_API_KEY**: Run `if [ -z "$OPENAI_API_KEY" ]; then echo "NOT SET"; else echo "SET"; fi` - if NOT SET, ask the user to run `export OPENAI_API_KEY="your-key-here"` before testing.
+
 ```bash
 rnow test [OPTIONS]
 ```
