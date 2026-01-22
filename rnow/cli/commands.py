@@ -1240,6 +1240,8 @@ def init(template: str, name: str, dataset: str, yes: bool):
                 shutil.copy2(file, dest_file)
 
             # Copy skills directory to .claude/skills/ (skills are inside rnow package)
+            # Skills are organized in base/ and recipes/ folders in source, but must be
+            # flattened for Claude Code to discover them
             source_skills_dir = Path(__file__).parent.parent / "skills"
             if source_skills_dir.exists():
                 dest_claude_dir = project_dir / ".claude"
@@ -1247,14 +1249,26 @@ def init(template: str, name: str, dataset: str, yes: bool):
                 dest_skills_dir = dest_claude_dir / "skills"
                 if dest_skills_dir.exists():
                     shutil.rmtree(dest_skills_dir)
-                shutil.copytree(source_skills_dir, dest_skills_dir)
+                dest_skills_dir.mkdir(exist_ok=True)
+                # Flatten: copy skill folders from base/ and recipes/ directly to dest
+                for category_dir in source_skills_dir.iterdir():
+                    if category_dir.is_dir() and category_dir.name in ("base", "recipes"):
+                        for skill_dir in category_dir.iterdir():
+                            if skill_dir.is_dir():
+                                shutil.copytree(skill_dir, dest_skills_dir / skill_dir.name)
+                    elif category_dir.is_dir():
+                        # Direct skill folder (not in base/recipes)
+                        shutil.copytree(category_dir, dest_skills_dir / category_dir.name)
+                    elif category_dir.is_file() and category_dir.suffix == ".md":
+                        # Direct skill file (e.g., debug-modal.md)
+                        shutil.copy2(category_dir, dest_skills_dir / category_dir.name)
         else:
             click.echo(
                 click.style("Template not found:", bold=True)
                 + click.style(f" {template}, using blank template", dim=True)
             )
     else:
-        # For blank template, still copy skills
+        # For blank template, still copy skills (flattened for Claude Code)
         source_skills_dir = Path(__file__).parent.parent / "skills"
         if source_skills_dir.exists():
             dest_claude_dir = project_dir / ".claude"
@@ -1262,7 +1276,19 @@ def init(template: str, name: str, dataset: str, yes: bool):
             dest_skills_dir = dest_claude_dir / "skills"
             if dest_skills_dir.exists():
                 shutil.rmtree(dest_skills_dir)
-            shutil.copytree(source_skills_dir, dest_skills_dir)
+            dest_skills_dir.mkdir(exist_ok=True)
+            # Flatten: copy skill folders from base/ and recipes/ directly to dest
+            for category_dir in source_skills_dir.iterdir():
+                if category_dir.is_dir() and category_dir.name in ("base", "recipes"):
+                    for skill_dir in category_dir.iterdir():
+                        if skill_dir.is_dir():
+                            shutil.copytree(skill_dir, dest_skills_dir / skill_dir.name)
+                elif category_dir.is_dir():
+                    # Direct skill folder (not in base/recipes)
+                    shutil.copytree(category_dir, dest_skills_dir / category_dir.name)
+                elif category_dir.is_file() and category_dir.suffix == ".md":
+                    # Direct skill file (e.g., debug-modal.md)
+                    shutil.copy2(category_dir, dest_skills_dir / category_dir.name)
 
     # Generate new IDs
     project_id = str(uuid.uuid4())

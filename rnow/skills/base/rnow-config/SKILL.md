@@ -1,6 +1,6 @@
 ---
 name: rnow-config
-description: Configure ReinforceNow training runs with config.yml and train.jsonl. Use when setting up training configuration, choosing models, configuring RL algorithms, rollout settings, or training data format. Triggers on "config.yml", "train.jsonl", "training config", "batch_size", "group_size", "max_turns", "qlora".
+description: Configure ReinforceNow training runs with config.yml and train.jsonl. Also covers converting HuggingFace datasets to ReinforceNow format. Triggers on "config.yml", "train.jsonl", "training config", "batch_size", "group_size", "max_turns", "qlora", "HuggingFace", "dataset", "convert dataset".
 allowed-tools: Read, Edit, Write, Bash, Grep, Glob
 ---
 
@@ -259,105 +259,149 @@ rollout:
 
 ## train.jsonl Format
 
-One JSON object per line. Each entry is a training example.
+For full train.jsonl documentation including message format, sandbox/docker configuration, and examples, see the **rnow-train-jsonl** skill.
 
-### Fields
+---
 
-| Field | Required | Description |
-|-------|----------|-------------|
-| `messages` | Yes | Conversation array |
-| `rewards` | RL only | List of reward function names |
-| `metadata` | No | Data accessible via `args.metadata` |
-| `variables` | No | Template variables via `args.variables` |
-| `tools` | No | Filter which tools are available |
-| `docker` | If sandbox | Docker image for sandbox execution |
-| `docker_env` | No | Environment variables for sandbox |
-| `docker_cmd` | No | Custom entrypoint command |
+## Converting HuggingFace Datasets
 
-### Message Roles
+This section shows how to convert HuggingFace datasets to train.jsonl format.
 
-| Role | Description |
-|------|-------------|
-| `system` | System instructions (optional, must be first) |
-| `user` | User message (at least one required) |
-| `assistant` | Assistant response (for multi-turn context) |
-| `tool` | Tool call result (for tool use context) |
+### SFT Conversion
 
-### Examples
+For SFT, include both user and assistant messages:
 
-#### Basic RL Entry
+```python
+from datasets import load_dataset
+import json
 
-```json
-{"messages": [{"role": "user", "content": "What is 2+2?"}], "rewards": ["accuracy"], "metadata": {"answer": "4"}}
+dataset = load_dataset("your-dataset-name", split="train")
+
+with open("train.jsonl", "w") as f:
+    for row in dataset:
+        entry = {
+            "messages": [
+                {"role": "user", "content": row["question"]},
+                {"role": "assistant", "content": row["answer"]}
+            ]
+        }
+        f.write(json.dumps(entry) + "\n")
 ```
 
-#### SFT Entry
+#### Alpaca-style Dataset
 
-```json
-{"messages": [{"role": "user", "content": "Hello"}, {"role": "assistant", "content": "Hi there!"}]}
+```python
+from datasets import load_dataset
+import json
+
+dataset = load_dataset("tatsu-lab/alpaca", split="train")
+
+with open("train.jsonl", "w") as f:
+    for row in dataset:
+        if row.get("input"):
+            user_content = f"{row['instruction']}\n\nInput: {row['input']}"
+        else:
+            user_content = row["instruction"]
+
+        entry = {
+            "messages": [
+                {"role": "user", "content": user_content},
+                {"role": "assistant", "content": row["output"]}
+            ]
+        }
+        f.write(json.dumps(entry) + "\n")
 ```
 
-#### With System Prompt
+#### Multi-turn Conversations
 
-```json
-{"messages": [{"role": "system", "content": "You are a math tutor"}, {"role": "user", "content": "Explain fractions"}], "rewards": ["quality"]}
+```python
+# Input: {"conversations": [{"from": "human", "value": "..."}, {"from": "gpt", "value": "..."}]}
+messages = []
+for turn in row["conversations"]:
+    role = "user" if turn["from"] == "human" else "assistant"
+    messages.append({"role": role, "content": turn["value"]})
+
+entry = {"messages": messages}
 ```
 
-#### With Tools
+### RL Conversion
 
-```json
-{"messages": [{"role": "user", "content": "Search for AI news"}], "rewards": ["relevance"], "tools": ["web_search"]}
+For RL, include only the prompt (user message). The model generates responses during training.
+
+```python
+from datasets import load_dataset
+import json
+
+dataset = load_dataset("your-math-dataset", split="train")
+
+with open("train.jsonl", "w") as f:
+    for row in dataset:
+        entry = {
+            "messages": [
+                {"role": "user", "content": row["question"]}
+            ],
+            "rewards": ["accuracy"],
+            "metadata": {
+                "expected_answer": row["answer"]
+            }
+        }
+        f.write(json.dumps(entry) + "\n")
 ```
 
-#### With Sandbox
+#### GSM8K Math Dataset
 
-```json
-{
-  "messages": [{"role": "user", "content": "Write and run a Python script"}],
-  "rewards": ["code_runs", "output_correct"],
-  "tools": ["execute_python"],
-  "docker": "python:3.11-slim"
-}
+```python
+from datasets import load_dataset
+import json
+import re
+
+dataset = load_dataset("gsm8k", "main", split="train")
+
+with open("train.jsonl", "w") as f:
+    for row in dataset:
+        # Extract final answer (#### followed by number)
+        answer_match = re.search(r"####\s*(.+)$", row["answer"])
+        final_answer = answer_match.group(1).strip() if answer_match else row["answer"]
+
+        entry = {
+            "messages": [{"role": "user", "content": row["question"]}],
+            "rewards": ["accuracy"],
+            "metadata": {"expected_answer": final_answer}
+        }
+        f.write(json.dumps(entry) + "\n")
 ```
 
-#### With Custom Docker
+#### MATH Dataset (Competition Math)
 
-```json
-{
-  "messages": [{"role": "user", "content": "Analyze the data"}],
-  "rewards": ["accuracy"],
-  "docker": "myorg/custom-image:latest",
-  "docker_env": {"DEBUG": "true", "DATA_PATH": "/data"},
-  "docker_cmd": ["python", "setup.py", "--init"]
-}
+```python
+from datasets import load_dataset
+import json
+import re
+
+dataset = load_dataset("hendrycks/competition_math", split="train")
+
+def extract_boxed(text: str) -> str:
+    match = re.search(r"\\boxed\{([^}]+)\}", text)
+    return match.group(1) if match else text
+
+with open("train.jsonl", "w") as f:
+    for row in dataset:
+        answer = extract_boxed(row["solution"])
+        # Wrap in $$ for math-verify (skip if already delimited or plain number)
+        if not answer.startswith(("$", "\\(")) and not answer.replace(".", "").replace("-", "").isdigit():
+            answer = f"$${answer}$$"
+
+        entry = {
+            "messages": [{"role": "user", "content": row["problem"]}],
+            "rewards": ["accuracy"],
+            "metadata": {"expected_answer": answer}
+        }
+        f.write(json.dumps(entry) + "\n")
 ```
 
-#### Multi-Turn Context
+**Note**: For math-verify, `expected_answer` MUST have math delimiters (`$...$` or `\(...\)`). Raw LaTeX like `\sqrt{2}` won't parse - use `$\sqrt{2}$`. Plain numbers like `42` work as-is.
 
-```json
-{
-  "messages": [
-    {"role": "user", "content": "What's the capital of France?"},
-    {"role": "assistant", "content": "Paris"},
-    {"role": "user", "content": "What's its population?"}
-  ],
-  "rewards": ["accuracy"],
-  "metadata": {"answer": "2.1 million"}
-}
-```
-
-### Docker Image Requirements
-
-**CRITICAL**: Custom Docker images must be built for `linux/amd64`:
-
-```bash
-# Correct
-docker build --platform linux/amd64 -t myorg/image:latest .
-docker push myorg/image:latest
-
-# Wrong (will fail on x86_64 servers)
-docker build -t myorg/image:latest .
-```
+For reward function examples (math-verify, llm_judge), see the **rnow-rewards** skill.
 
 ---
 
@@ -473,52 +517,6 @@ trainer:
 4. **Tools in train.jsonl must exist in tools.py**
 5. **sandbox=True requires docker field**
 6. **max_tokens must fit in context window**
-
-## Quick Reference: All Literal Field Options
-
-### dataset_type (required)
-| Value | Description |
-|-------|-------------|
-| `rl` | Reinforcement Learning - requires rewards.py |
-| `sft` | Supervised Fine-Tuning - no rewards needed |
-
-### algorithm.loss_fn (RL only)
-| Value | Description |
-|-------|-------------|
-| `ppo` | Proximal Policy Optimization (default, recommended) |
-| `importance_sampling` | Alternative loss function |
-
-### algorithm.adv_estimator (RL only)
-| Value | Description |
-|-------|-------------|
-| `grpo` | Group Relative Policy Optimization (default, recommended) |
-| `gae` | Generalized Advantage Estimation |
-| `reinforce` | REINFORCE algorithm |
-
-### rollout.termination_policy (RL only)
-| Value | Description |
-|-------|-------------|
-| `last_tool` | Episode ends when model responds without tool call (default) |
-| `max_turns` | Episode always runs for exactly max_turns |
-
-### rollout.thinking_mode (RL only)
-| Value | Description |
-|-------|-------------|
-| `null` | Auto-enable for supported models (default) |
-| `disabled` | Explicitly disable reasoning |
-| `easy` | Light reasoning |
-| `medium` | Moderate reasoning |
-| `hard` | Deep reasoning (uses more tokens) |
-
-### messages[].role (train.jsonl)
-| Value | Description |
-|-------|-------------|
-| `system` | System instructions (optional, must be first if present) |
-| `user` | User message (at least one required) |
-| `assistant` | Assistant response (for multi-turn context) |
-| `tool` | Tool call result (for tool use context) |
-
----
 
 ## Testing Configuration
 

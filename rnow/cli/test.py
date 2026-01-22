@@ -3,82 +3,44 @@
 Test command for running RL rollouts via API.
 
 Uses the /api/rnow/rollout endpoint which runs rollouts on Cloud Run.
-
-Modes:
-- Default: Uses OpenAI gpt-5-nano (requires OPENAI_API_KEY)
-- --tinker-api: Uses Tinker models from config.yml (requires auth)
+Requires OPENAI_API_KEY environment variable.
 """
 
 from __future__ import annotations
 
 import asyncio
-import itertools
+import contextlib
 import json
 import os
 import random
 import signal
 import sys
-import threading
 import time
+import uuid
 from pathlib import Path
 
 import click
 import httpx
 import yaml
+from rich.console import Console
+from rich.live import Live
+from rich.text import Text
 
 # Global flag for graceful shutdown
 _shutdown_requested = False
 
 from rnow.cli.auth import get_auth_headers
-from rnow.cli.commands import get_thinking_mode_display
 
-# ReinforceNow teal: #14B8A6 as RGB tuple for click.style()
-TEAL_RGB = (20, 184, 166)
+# ReinforceNow teal
+TEAL = "#14B8A6"
+TEAL_RGB = (20, 184, 166)  # For click.style()
 
-
-class Spinner:
-    """Simple spinner for CLI feedback with dynamic status updates."""
-
-    FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
-
-    def __init__(self, message: str = ""):
-        self.message = message
-        self._stop_event = threading.Event()
-        self._thread: threading.Thread | None = None
-        self._lock = threading.Lock()
-
-    def update(self, message: str):
-        """Update the spinner message."""
-        with self._lock:
-            self.message = message
-
-    def _spin(self):
-        for frame in itertools.cycle(self.FRAMES):
-            if self._stop_event.is_set() or _shutdown_requested:
-                break
-            with self._lock:
-                msg = self.message
-            # Clear line and write new status
-            sys.stdout.write(f"\r\033[K{frame} {msg}")
-            sys.stdout.flush()
-            time.sleep(0.08)
-        # Clear the spinner line when done
-        sys.stdout.write("\r\033[K")
-        sys.stdout.flush()
-
-    def start(self):
-        self._stop_event.clear()
-        self._thread = threading.Thread(target=self._spin, daemon=True)
-        self._thread.start()
-
-    def stop(self):
-        self._stop_event.set()
-        if self._thread:
-            self._thread.join(timeout=0.5)  # Don't wait forever
+console = Console()
 
 
-from rnow.cli.common import require_auth
 from rnow.models import ProjectConfig
+
+SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 
 DEFAULT_API_URL = "https://www.reinforcenow.ai"
 
@@ -87,7 +49,7 @@ class RolloutClient:
     """
     Client for running rollouts via the /api/rnow/rollout endpoint.
 
-    Uses async polling: POST starts job, GET polls for results.
+    Uses SSE streaming: POST starts job and returns tunnel URL, CLI connects to SSE.
     """
 
     def __init__(
@@ -114,75 +76,8 @@ class RolloutClient:
         self.openai_api_key = openai_api_key
         self.mcp_url = mcp_url
         self.auth_headers = get_auth_headers()
-        self.client = httpx.AsyncClient(timeout=60.0)
+        self.client = httpx.AsyncClient(timeout=120.0)
         self.total_charged_dollars = 0.0
-
-    async def start_rollout(
-        self,
-        samples: list[dict],
-        tools_py_code: str | None = None,
-        rewards_py_code: str | None = None,
-        requirements_txt: str | None = None,
-        dockerfiles: dict[str, str] | None = None,
-        secrets: dict[str, str] | None = None,
-    ) -> str:
-        """
-        Start rollouts and return rollout ID immediately.
-        Use poll_rollout() to check for results.
-        """
-        payload = {
-            "samples": samples,
-            "model": self.model,
-            "max_tokens": self.max_tokens,
-            "temperature": self.temperature,
-            "max_turns": self.max_turns,
-            "termination_policy": self.termination_policy,
-            "tools_py_code": tools_py_code,
-            "rewards_py_code": rewards_py_code,
-            "debug": self.debug,
-        }
-
-        if self.mcp_url:
-            payload["mcp_url"] = self.mcp_url
-
-        # Send requirements.txt for pip install
-        if requirements_txt:
-            payload["requirements_txt"] = requirements_txt
-
-        # Send Dockerfiles for local/ images
-        if dockerfiles:
-            payload["dockerfiles"] = dockerfiles
-
-        # Send project secrets (from .env file)
-        if secrets:
-            payload["secrets"] = secrets
-
-        if self.smoke_test:
-            payload["smoke_test"] = True
-            payload["openai_api_key"] = self.openai_api_key
-
-        resp = await self.client.post(
-            f"{self.api_base}/api/rnow/rollout",
-            json=payload,
-            headers=self.auth_headers,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-
-        if "error" in data:
-            raise Exception(f"API error: {data.get('detail', data.get('error'))}")
-
-        return data["rollout_id"]
-
-    async def poll_rollout(self, rollout_id: str) -> dict:
-        """Poll for rollout status. Returns dict with 'status' field."""
-        resp = await self.client.get(
-            f"{self.api_base}/api/rnow/rollout",
-            params={"id": rollout_id},
-            headers=self.auth_headers,
-        )
-        resp.raise_for_status()
-        return resp.json()
 
     async def run_batch_rollouts(
         self,
@@ -192,97 +87,267 @@ class RolloutClient:
         requirements_txt: str | None = None,
         dockerfiles: dict[str, str] | None = None,
         secrets: dict[str, str] | None = None,
-        spinner: Spinner | None = None,
         timeout_minutes: int = 30,
     ) -> tuple[str, list[dict]]:
         """
-        Run rollouts with exponential backoff polling.
+        Run rollouts with SSE streaming via the API streaming endpoint.
         Returns (rollout_id, results).
+
+        Shows live status table with spinner, prints conversations as they stream.
         """
-        # Start the rollout
-        rollout_id = await self.start_rollout(
-            samples, tools_py_code, rewards_py_code, requirements_txt, dockerfiles, secrets
+        # Build payload for Next.js API
+        payload = {
+            "samples": samples,
+            "model": self.model,
+            "max_tokens": self.max_tokens,
+            "temperature": self.temperature,
+            "max_turns": self.max_turns,
+            "termination_policy": self.termination_policy,
+            "rewards_py_code": rewards_py_code,
+            "tools_py_code": tools_py_code,
+            "requirements_txt": requirements_txt,
+            "secrets": secrets,
+        }
+
+        if self.mcp_url:
+            payload["mcp_url"] = self.mcp_url
+
+        # Get streaming URL and payload from Next.js API
+        resp = await self.client.post(
+            f"{self.api_base}/api/rnow/rollout",
+            json=payload,
+            headers=self.auth_headers,
         )
+        resp.raise_for_status()
+        data = resp.json()
 
-        if spinner:
-            spinner.update(f"Running rollouts... (ID: {rollout_id[:8]})")
+        if "error" in data:
+            raise Exception(f"API error: {data.get('error')}")
 
-        # Poll with exponential backoff
-        poll_interval = 2.0  # Start at 2 seconds
-        max_interval = 10.0  # Cap at 10 seconds
-        timeout = timeout_minutes * 60
+        rollout_id = data["rollout_id"]
+        streaming_url = data["streaming_url"]
+        streaming_payload = data["payload"]
+
+        # Track state
+        num_samples = len(samples)
+        results_by_index: dict[int, dict] = {}
+        status: dict[int, str] = {
+            i: "queued" for i in range(num_samples)
+        }  # queued, running, done, error
         start_time = time.time()
+        spinner_frame = 0
 
-        while time.time() - start_time < timeout:
-            if _shutdown_requested:
-                raise asyncio.CancelledError()
+        # Create rollouts directory
+        rollouts_dir = Path("rollouts")
+        rollouts_dir.mkdir(parents=True, exist_ok=True)
 
-            # Add jitter (±20%)
-            jitter = poll_interval * 0.2 * (random.random() * 2 - 1)
-            await asyncio.sleep(poll_interval + jitter)
+        # Track rollout files and conversations (for streaming writes)
+        rollout_files: dict[int, Path] = {}
+        rollout_ids: dict[int, str] = {}
+        conversations: dict[int, list] = {}
 
-            result = await self.poll_rollout(rollout_id)
-            status = result.get("status")
+        def write_rollout_file(idx: int, data: dict) -> None:
+            """Write current rollout state to file."""
+            if idx in rollout_files:
+                rollout_files[idx].write_text(json.dumps(data, indent=2))
 
-            if status == "completed":
-                # Track billing
-                if "billing" in result:
-                    billing = result["billing"]
-                    tokens = billing.get("prompt_tokens", 0) + billing.get("completion_tokens", 0)
-                    self.total_charged_dollars += tokens * 0.000001
-                return rollout_id, result.get("results", [])
+        def render_status() -> Text:
+            nonlocal spinner_frame
+            spinner_frame += 1
+            spinner = SPINNER_FRAMES[spinner_frame % len(SPINNER_FRAMES)]
+            elapsed = int(time.time() - start_time)
 
-            if status == "failed":
-                raise Exception(f"Rollout failed: {result.get('error', 'Unknown error')}")
+            text = Text()
+            for i in range(num_samples):
+                s = status[i]
+                if s == "queued":
+                    text.append(f"Rollout {i + 1}: ", style=f"bold {TEAL}")
+                    text.append("queued\n", style="dim")
+                elif s == "running":
+                    rid = rollout_ids.get(i, "")
+                    text.append(f"Rollout {i + 1}: ", style=f"bold {TEAL}")
+                    text.append("streaming…", style="white")
+                    if rid:
+                        text.append(f"  → rollouts/{rid}.json", style="dim")
+                    text.append("\n")
+                elif s == "done":
+                    result = results_by_index.get(i, {})
+                    reward = result.get("total_reward", 0.0)
+                    breakdown = result.get("rewards", {})
+                    rid = rollout_ids.get(i, "")
+                    text.append(f"Rollout {i + 1}: ", style=f"bold {TEAL}")
+                    text.append(f"✓ reward={reward:.3f}", style="green")
+                    if breakdown:
+                        bd = ", ".join(f"{k}={v:.3f}" for k, v in breakdown.items())
+                        text.append(f"  [{bd}]", style="green")
+                    if rid:
+                        text.append(f"  written to rollouts/{rid}.json", style="dim")
+                    text.append("\n")
+                elif s == "error":
+                    result = results_by_index.get(i, {})
+                    error = result.get("error", "Unknown")
+                    text.append(f"Rollout {i + 1}: ", style=f"bold {TEAL}")
+                    text.append(f"✗ {error}\n", style="red")
 
-            # Exponential backoff
-            poll_interval = min(poll_interval * 1.5, max_interval)
+            pending = sum(1 for s in status.values() if s in ("queued", "running"))
+            if pending > 0:
+                text.append(
+                    f"\n{spinner} Running… {num_samples - pending}/{num_samples} complete ({elapsed}s)\n\n",
+                    style="white",
+                )
+            else:
+                text.append(f"\n✓ Complete ({elapsed}s)\n\n", style="green")
 
-            if spinner:
-                elapsed = int(time.time() - start_time)
-                spinner.update(f"Running rollouts... ({elapsed}s, ID: {rollout_id[:8]})")
+            return text
 
-        raise TimeoutError(f"Rollout timed out after {timeout_minutes} minutes")
+        try:
+            async with (
+                httpx.AsyncClient(timeout=None) as sse_client,
+                sse_client.stream(
+                    "POST",
+                    streaming_url,
+                    json=streaming_payload,
+                    headers={"Accept": "text/event-stream"},
+                ) as response,
+            ):
+                response.raise_for_status()
+                buffer = ""
+                done_streaming = False
+
+                with Live(render_status(), console=console, refresh_per_second=10) as live:
+                    # Background task to update spinner and timer
+                    async def update_display():
+                        while not done_streaming:
+                            live.update(render_status())
+                            await asyncio.sleep(0.1)
+
+                    update_task = asyncio.create_task(update_display())
+
+                    try:
+                        async for chunk in response.aiter_text():
+                            if _shutdown_requested:
+                                raise asyncio.CancelledError()
+
+                            buffer += chunk
+
+                            while "\n\n" in buffer:
+                                event_str, buffer = buffer.split("\n\n", 1)
+                                event_data = self._parse_sse_event(event_str)
+
+                                if event_data is None:
+                                    continue
+
+                                event_type = event_data.get("event")
+                                data_json = event_data.get("data")
+
+                                if event_type == "rollout_start":
+                                    idx = data_json.get("index", 0)
+                                    status[idx] = "running"
+
+                                    # Generate timestamped filename and create file
+                                    timestamp = time.strftime("%Y%m%d_%H%M%S")
+                                    short_id = str(uuid.uuid4())[:8]
+                                    result_id = f"{timestamp}_{short_id}"
+                                    rollout_ids[idx] = result_id
+                                    rollout_files[idx] = rollouts_dir / f"{result_id}.json"
+
+                                    # Initialize conversation with initial messages
+                                    initial_messages = data_json.get("messages", [])
+                                    conversations[idx] = list(initial_messages)
+
+                                    # Write initial state
+                                    write_rollout_file(
+                                        idx,
+                                        {
+                                            "id": result_id,
+                                            "completed": False,
+                                            "conversation": conversations[idx],
+                                        },
+                                    )
+
+                                elif event_type == "message":
+                                    # Append message to conversation and update file
+                                    idx = data_json.get("index", 0)
+                                    msg = data_json.get("message", {})
+                                    if idx in conversations and msg:
+                                        conversations[idx].append(msg)
+                                        write_rollout_file(
+                                            idx,
+                                            {
+                                                "id": rollout_ids.get(idx, ""),
+                                                "completed": False,
+                                                "conversation": conversations[idx],
+                                            },
+                                        )
+
+                                elif event_type == "result":
+                                    idx = data_json.get("index", 0)
+
+                                    # Use existing ID or generate new one
+                                    result_id = rollout_ids.get(idx)
+                                    if not result_id:
+                                        timestamp = time.strftime("%Y%m%d_%H%M%S")
+                                        short_id = str(uuid.uuid4())[:8]
+                                        result_id = f"{timestamp}_{short_id}"
+                                        rollout_ids[idx] = result_id
+                                        rollout_files[idx] = rollouts_dir / f"{result_id}.json"
+
+                                    data_json["id"] = result_id
+                                    # Add completed flag: true for success, "error" for failure
+                                    data_json["completed"] = (
+                                        True if data_json.get("success") else "error"
+                                    )
+                                    results_by_index[idx] = data_json
+
+                                    if data_json.get("success"):
+                                        status[idx] = "done"
+                                    else:
+                                        status[idx] = "error"
+
+                                    # Write final result with rewards
+                                    write_rollout_file(idx, data_json)
+
+                                elif event_type == "complete":
+                                    billing = data_json.get("billing", {})
+                                    tokens = billing.get("prompt_tokens", 0) + billing.get(
+                                        "completion_tokens", 0
+                                    )
+                                    self.total_charged_dollars += tokens * 0.000001
+                    finally:
+                        done_streaming = True
+                        update_task.cancel()
+                        with contextlib.suppress(asyncio.CancelledError):
+                            await update_task
+                        # Final update
+                        live.update(render_status())
+
+        except httpx.RemoteProtocolError as e:
+            console.print(f"[yellow]Connection closed: {e}[/yellow]")
+
+        return rollout_id, list(results_by_index.values())
+
+    def _parse_sse_event(self, event_str: str) -> dict | None:
+        """Parse an SSE event string into event type and data."""
+        event_type = None
+        data_str = None
+
+        for line in event_str.strip().split("\n"):
+            if line.startswith("event:"):
+                event_type = line[6:].strip()
+            elif line.startswith("data:"):
+                data_str = line[5:].strip()
+
+        if data_str:
+            try:
+                data_json = json.loads(data_str)
+                return {"event": event_type, "data": data_json}
+            except json.JSONDecodeError:
+                pass
+
+        return None
 
     async def close(self):
         await self.client.aclose()
-
-
-def _format_message(msg: dict, max_len: int = 300) -> str:
-    """Format a message for display."""
-    role = msg.get("role", "unknown")
-    content = msg.get("content", "")
-    # Truncate long content
-    if len(content) > max_len:
-        content = content[:max_len] + "..."
-    # Color based on role
-    colors = {"system": "yellow", "user": "blue", "assistant": "green", "tool": "magenta"}
-    color = colors.get(role, "white")
-    return click.style(f"[{role}]", fg=color) + f" {content}"
-
-
-async def _run_single_rollout(
-    client: RolloutClient,
-    sample: dict,
-    tools_py_code: str | None,
-    rewards_py_code: str | None,
-    verbose: bool = False,
-) -> dict:
-    """Run a single rollout via the API."""
-    result = await client.run_rollout(
-        sample=sample,
-        tools_py_code=tools_py_code,
-        rewards_py_code=rewards_py_code,
-    )
-
-    # Show conversation in verbose mode
-    if verbose:
-        click.echo("  --- Conversation ---")
-        for msg in result.get("conversation", []):
-            click.echo(f"    {_format_message(msg)}")
-        click.echo("  ---------------------")
-
-    return result
 
 
 @click.command(name="test")
@@ -302,18 +367,6 @@ async def _run_single_rollout(
     help="Number of rollouts to run",
 )
 @click.option(
-    "--multi-turn/--single-turn",
-    default=True,
-    show_default=True,
-    help="Allow multi-turn rollouts or force single-turn",
-)
-@click.option(
-    "--with-tools/--no-tools",
-    default=True,
-    show_default=True,
-    help="Enable or disable tool use during rollout",
-)
-@click.option(
     "--model",
     default=None,
     help="Override model name for sampling (otherwise uses config.model.path)",
@@ -322,55 +375,14 @@ async def _run_single_rollout(
     "--api-url",
     envvar="RNOW_API_URL",
     default=None,
-    help="Base URL of the Next.js backend (default: https://www.reinforcenow.ai)",
-)
-@click.option(
-    "--verbose",
-    "-v",
-    is_flag=True,
-    help="Show detailed output for each rollout turn",
-)
-@click.option(
-    "--truncate",
-    "-t",
-    default=None,
-    type=int,
-    help="Truncate message content to N characters (default: no truncation)",
+    hidden=True,
+    help="Base URL of the Next.js backend",
 )
 @click.option(
     "--debug",
     is_flag=True,
-    help="Use debug trainer image from Docker Hub (for testing trainer changes)",
-)
-@click.option(
-    "--output-dir",
-    "-o",
-    "output_dir",
-    type=click.Path(file_okay=False, dir_okay=True, path_type=Path),
-    default=None,
-    help="Save rollout results as JSON files in this directory",
-)
-@click.option(
-    "--tinker-api",
-    is_flag=True,
-    help="Use Tinker API instead of OpenAI (uses model from config.yml)",
-)
-@click.option(
-    "--id",
-    "rollout_id",
-    default=None,
-    help="Fetch results for an existing rollout ID (skip running new rollout)",
-)
-@click.option(
-    "--store",
-    is_flag=True,
-    help="Store rollout ID in ./rollouts/<id>.txt for later retrieval",
-)
-@click.option(
-    "--timeout",
-    default=60,
-    show_default=True,
-    help="Timeout in minutes for polling results",
+    hidden=True,
+    help="Use debug trainer image",
 )
 @click.option(
     "--entry",
@@ -385,28 +397,14 @@ def test(
     ctx,
     project_dir,
     num_rollouts,
-    multi_turn,
-    with_tools,
     model,
     api_url,
-    verbose,
-    truncate,
     debug,
-    output_dir,
-    tinker_api,
-    rollout_id,
-    store,
-    timeout,
     entries,
 ):
     """Test RL rollouts before submitting.
 
-    Runs rollouts via the /api/rnow/rollout endpoint on Cloud Run.
-
-    By default uses OpenAI gpt-5-nano (requires OPENAI_API_KEY env var).
-    Use --tinker-api to use Tinker API with the model from config.yml.
-
-    Use --id to fetch results for an existing rollout.
+    Runs rollouts via the ReinforceNow API. Requires OPENAI_API_KEY.
 
     Only works with RL projects (dataset_type: rl).
     """
@@ -415,31 +413,13 @@ def test(
 
     resolved_api_url = api_url or ctx.obj.get("api_url", "").replace("/api", "") or DEFAULT_API_URL
 
-    # Handle --id flag: just fetch existing rollout results
-    if rollout_id:
-        asyncio.run(
-            _fetch_rollout_results(
-                rollout_id=rollout_id,
-                api_url=resolved_api_url,
-                store=store,
-                truncate=truncate,
-                output_dir=output_dir,
-            )
+    # Check for OpenAI API key
+    openai_api_key = os.environ.get("OPENAI_API_KEY")
+    if not openai_api_key:
+        raise click.ClickException(
+            "OPENAI_API_KEY environment variable is required.\n"
+            "Set it with: export OPENAI_API_KEY=sk-..."
         )
-        return
-
-    # Check for OpenAI API key (default mode uses OpenAI)
-    openai_api_key = None
-    if tinker_api:
-        require_auth()
-    else:
-        openai_api_key = os.environ.get("OPENAI_API_KEY")
-        if not openai_api_key:
-            raise click.ClickException(
-                "OPENAI_API_KEY environment variable is required.\n"
-                "Set it with: export OPENAI_API_KEY=sk-...\n\n"
-                "Or use --tinker-api to use the Tinker API instead."
-            )
 
     async def run_with_cancellation():
         """Run test with proper cancellation support."""
@@ -460,18 +440,10 @@ def test(
             await _test_async(
                 project_dir=project_dir,
                 num_rollouts=num_rollouts,
-                multi_turn=multi_turn,
-                with_tools=with_tools,
                 model_override=model,
                 api_url=resolved_api_url,
-                verbose=verbose,
-                truncate=truncate,
                 debug=debug,
-                output_dir=output_dir,
-                use_openai=not tinker_api,
                 openai_api_key=openai_api_key,
-                store=store,
-                timeout_minutes=timeout,
                 entries=entries,
             )
         except asyncio.CancelledError:
@@ -654,18 +626,10 @@ def _display_results(
 async def _test_async(
     project_dir: Path,
     num_rollouts: int,
-    multi_turn: bool,
-    with_tools: bool,
     model_override: str | None,
     api_url: str,
-    verbose: bool,
-    truncate: int | None,
     debug: bool = False,
-    output_dir: Path | None = None,
-    use_openai: bool = True,
     openai_api_key: str | None = None,
-    store: bool = False,
-    timeout_minutes: int = 60,
     entries: tuple[int, ...] = (),
 ):
     project_dir = Path(project_dir)
@@ -725,7 +689,7 @@ async def _test_async(
 
     # Read user code files to send to the API
     rewards_py_code = rewards_path.read_text()
-    tools_py_code = tools_path.read_text() if with_tools and tools_path.exists() else None
+    tools_py_code = tools_path.read_text() if tools_path.exists() else None
 
     # Read requirements.txt if exists
     requirements_path = project_dir / "requirements.txt"
@@ -759,30 +723,19 @@ async def _test_async(
     if not samples:
         raise click.ClickException("train.jsonl is empty")
 
-    # Model selection: --model flag > tinker-api (config.model.path) > default (gpt-5-nano)
-    if model_override:
-        model_name = model_override
-    elif not use_openai:
-        model_name = config.model.path
-    else:
-        model_name = "gpt-5-nano"
+    # Model selection: --model flag overrides default (gpt-5-nano)
+    model_name = model_override if model_override else "gpt-5-nano"
 
+    # Get rollout settings from config
     max_tokens = config.rollout.max_tokens if config.rollout else 2048
-    max_turns_config = config.rollout.max_turns if config.rollout else 1
+    max_turns = config.rollout.max_turns if config.rollout else 1
     termination_policy = config.rollout.termination_policy if config.rollout else "last_tool"
     mcp_url = config.rollout.mcp_url if config.rollout else None
 
-    max_turns = 1 if not multi_turn else max_turns_config
-
-    # Display mode and model info
-    if use_openai:
-        click.echo(f"Model: {click.style(model_name, fg=TEAL_RGB)} (OpenAI)")
-    else:
-        thinking_display = get_thinking_mode_display(config)
-        click.echo(
-            f"Model: {model_name} ({click.style(thinking_display, fg=TEAL_RGB)}) [Tinker API]"
-        )
-
+    # Display model info
+    click.echo(
+        f"Model: {click.style(model_name, fg=TEAL_RGB)} {click.style('(smoke test uses OpenAI for latency)', dim=True)}"
+    )
     click.echo()
 
     try:
@@ -795,7 +748,7 @@ async def _test_async(
             max_turns=max_turns,
             termination_policy=termination_policy,
             debug=debug,
-            smoke_test=use_openai,
+            smoke_test=True,
             openai_api_key=openai_api_key,
             mcp_url=mcp_url,
         )
@@ -828,60 +781,27 @@ async def _test_async(
             # Random selection
             selected_samples = [random.choice(samples) for _ in range(num_rollouts)]
 
-        # Start spinner for batch rollout
-        spinner = Spinner(f"Starting {len(selected_samples)} rollouts...")
-        spinner.start()
-
-        start_time = time.time()
-        rollout_id = None
-
         try:
-            # Start rollout and poll for results with exponential backoff
-            rollout_id, batch_results = await client.run_batch_rollouts(
+            # Start rollout and stream results
+            _, batch_results = await client.run_batch_rollouts(
                 samples=selected_samples,
                 tools_py_code=tools_py_code,
                 rewards_py_code=rewards_py_code,
                 requirements_txt=requirements_txt,
                 dockerfiles=dockerfiles if dockerfiles else None,
                 secrets=project_secrets if project_secrets else None,
-                spinner=spinner,
-                timeout_minutes=timeout_minutes,
+                timeout_minutes=60,
             )
         except asyncio.CancelledError:
             batch_results = []
-        except Exception as e:
-            spinner.stop()
-            raise e
-
-        total_time = time.time() - start_time
-        spinner.stop()
-
-        # Show rollout ID
-        if rollout_id:
-            click.echo(f"Rollout ID: {click.style(rollout_id, fg=TEAL_RGB)}")
-            click.echo()
 
         # Check if shutdown was requested
         if _shutdown_requested:
             await client.close()
             return
 
-        # Store results if requested
-        if store and rollout_id:
-            _store_rollout_id(
-                rollout_id,
-                {
-                    "status": "completed",
-                    "results": batch_results,
-                    "billing": {"prompt_tokens": 0, "completion_tokens": 0},
-                },
-            )
-
-        # Display results using shared function
-        failed_count = _display_results(batch_results, truncate, output_dir, rollout_id)
-
-        # Get total billing
-        total_charged = client.total_charged_dollars
+        # Show summary (results already streamed)
+        failed_count = len([r for r in batch_results if not r.get("success")])
 
         # Close client
         await client.close()
@@ -889,10 +809,9 @@ async def _test_async(
     except Exception:
         raise
 
-    # Show timing and cost
-    click.echo(f"Latency: {click.style(f'{total_time:.1f}s', fg=TEAL_RGB)}")
-    if total_charged > 0:
-        click.echo(f"Cost: {click.style(f'${total_charged:.4f}', fg=TEAL_RGB)}")
+    # Show completion
+    click.echo()
+    click.echo(click.style("Test complete", fg=TEAL_RGB, bold=True))
 
     # Fail if any rollouts failed
     if failed_count > 0:

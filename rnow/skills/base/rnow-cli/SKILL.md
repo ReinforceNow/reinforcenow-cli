@@ -124,7 +124,6 @@ rnow init [OPTIONS]
 | Template | Type | Description |
 |----------|------|-------------|
 | `start` | RL | Default single-turn RL (alias for rl-single) |
-| `first-rl` | RL | Config only - for first-time users with Claude Code |
 | `rl-single` | RL | Single-turn with math reasoning |
 | `rl-tools` | RL | Multi-turn with tool calling |
 | `sft` | SFT | Supervised finetuning |
@@ -183,48 +182,16 @@ rnow run [OPTIONS]
 - `tools.py` - Tool definitions
 - `requirements.txt` - Python dependencies
 
-**CLI Output:**
-```
-Run started successfully ✅
-  Project: Math Reasoning
-  Model: Qwen/Qwen3-8B (thinking: medium)
-  Run ID: run_abc123xyz
-
-View your experiment here:
-https://www.reinforcenow.ai/runs/run_abc123xyz
-```
-
-### How to Respond After Starting a Run
-
-When you run `rnow run` and it succeeds, tell the user:
-
-1. **Confirm success** - The run has started
-2. **Share the dashboard link** - Where they can monitor progress
-3. **Set expectations** - Training takes time, they can watch metrics live
-
-**Example response:**
-
-> Your training run has started! You can monitor its progress here:
-> https://www.reinforcenow.ai/runs/run_abc123xyz
->
-> The dashboard will show live metrics, reward curves, and sample outputs as training progresses. Training typically takes 30 minutes to several hours depending on your dataset size and configuration.
-
-### Multi-Model Training
-
-If `model.path` is a list in config.yml:
-
-```yaml
-model:
-  path:
-    - Qwen/Qwen3-4B-Instruct-2507
-    - Qwen/Qwen3-8B
-```
-
+**Example:**
 ```bash
+cd my-project
 rnow run
-# Submitting 2 training runs...
-# Run 1: run_abc123 (Qwen/Qwen3-4B-Instruct-2507)
-# Run 2: run_def456 (Qwen/Qwen3-8B)
+
+# Output:
+# Validating project...
+# Uploading files...
+# Starting run: run_abc123xyz
+# View at: https://www.reinforcenow.ai/runs/run_abc123xyz
 ```
 
 ---
@@ -252,10 +219,6 @@ rnow stop run_abc123xyz
 
 Test RL rollouts locally before submitting.
 
-### Before Running rnow test
-
-**Check OPENAI_API_KEY**: Run `if [ -z "$OPENAI_API_KEY" ]; then echo "NOT SET"; else echo "SET"; fi` - if NOT SET, ask the user to run `export OPENAI_API_KEY="your-key-here"` before testing.
-
 ```bash
 rnow test [OPTIONS]
 ```
@@ -264,17 +227,8 @@ rnow test [OPTIONS]
 |--------|---------|-------------|
 | `-d, --dir PATH` | . | Project directory |
 | `-n, --num-rollouts N` | 1 | Number of rollouts |
-| `--multi-turn/--single-turn` | multi | Allow multi-turn |
-| `--with-tools/--no-tools` | with | Enable tools |
-| `--model MODEL` | config | Override model |
 | `--entry INDICES` | random | Test specific entries (e.g., "0,2,5") |
-| `-v, --verbose` | off | Detailed output |
-| `--output-dir DIR` | - | Save results as JSON |
-| `--truncate N` | - | Truncate output to N chars |
-| `--timeout MINS` | 10 | Timeout in minutes |
-| `--tinker-api` | off | Use Tinker API |
-| `--id ID` | - | Fetch existing rollout |
-| `--store` | off | Store rollout ID |
+| `--model MODEL` | config | Override model for testing |
 
 ### Examples
 
@@ -284,15 +238,14 @@ rnow test
 # Runs 1 rollout, shows reward breakdown
 ```
 
-**Multiple rollouts with verbose output:**
+**Multiple rollouts:**
 ```bash
-rnow test -n 5 --verbose
-# Shows full conversation and tool calls for each rollout
+rnow test -n 5
 ```
 
 **Test specific entries:**
 ```bash
-rnow test --entry 0,3,7 --verbose
+rnow test --entry 0,3,7
 # Tests entries at indices 0, 3, and 7 from train.jsonl
 ```
 
@@ -300,24 +253,6 @@ rnow test --entry 0,3,7 --verbose
 ```bash
 rnow test --model gpt-5-nano -n 3
 # Uses gpt-5-nano instead of config.model.path
-```
-
-**Save results:**
-```bash
-rnow test -n 10 --output-dir ./results
-# Saves each rollout as JSON in ./results/
-```
-
-**Single-turn only:**
-```bash
-rnow test --single-turn
-# Forces single turn even if config allows multi-turn
-```
-
-**Disable tools:**
-```bash
-rnow test --no-tools
-# Runs without tool calling
 ```
 
 ### Test Output
@@ -360,139 +295,4 @@ rnow download run_abc123xyz -o ./my-model
 # Downloading checkpoint...
 # Progress: 100%
 # Saved to: ./my-model/
-```
-
----
-
-## Environment Variables
-
-| Variable | Description |
-|----------|-------------|
-| `REINFORCE_API_URL` | Custom API base URL |
-| `RNOW_API_URL` | Alternative API URL variable |
-
-```bash
-REINFORCE_API_URL=http://localhost:3000/api rnow test
-```
-
----
-
-## Workflow Examples
-
-### Complete RL Training Workflow
-
-```bash
-# 1. Login
-rnow login
-
-# 2. Create project
-mkdir my-rl-project && cd my-rl-project
-rnow init --template rl-single --name "Math Reasoning"
-
-# 3. Edit files as needed
-# - config.yml: Adjust batch_size, epochs, etc.
-# - rewards.py: Customize reward logic
-# - train.jsonl: Add more training data
-
-# 4. Test locally
-rnow test -n 5 --verbose
-
-# 5. Submit training
-rnow run
-
-# 6. Monitor (check dashboard URL from output)
-
-# 7. Download trained model
-rnow download run_abc123xyz -o ./trained-model
-```
-
-### Testing Different Configurations
-
-```bash
-# Test with different models
-rnow test --model gpt-5-nano -n 3
-rnow test --model Qwen/Qwen3-8B -n 3
-
-# Compare single vs multi-turn
-rnow test --single-turn -n 5
-rnow test --multi-turn -n 5
-
-# Test specific problematic entries
-rnow test --entry 42,87,103 --verbose
-```
-
-### Debugging Failed Runs
-
-```bash
-# Check status
-rnow status
-
-# Stop failed run
-rnow stop run_abc123xyz
-
-# Test locally with verbose output
-rnow test -n 1 --verbose --entry 0
-
-# Check specific entry that might be failing
-rnow test --entry 42 --verbose
-```
-
----
-
-## Troubleshooting
-
-### "Not authenticated"
-```bash
-rnow login
-```
-
-### "Organization not found"
-```bash
-rnow orgs  # List available orgs
-rnow orgs ORG_ID  # Select the right one
-```
-
-### "Validation error"
-```bash
-# Check your files
-rnow test -n 1 --verbose
-# Look for specific errors in output
-```
-
-### "sandbox=True requires docker field"
-Add `"docker": "python:3.11-slim"` to entries using sandbox rewards/tools.
-
-### "batch_size * group_size exceeds limit"
-Reduce `batch_size` or `group_size` so product is <= 2048.
-
-### "Model not supported"
-Check supported models list or use a checkpoint ID from a previous run.
-
-### Test times out
-```bash
-rnow test --timeout 30  # Increase to 30 minutes
-```
-
----
-
-## Quick Reference
-
-```bash
-# Auth
-rnow login
-rnow logout
-rnow status
-rnow orgs [ORG_ID]
-
-# Projects
-rnow init --template <name> [--name <project>]
-rnow run [--dir <path>] [--name <run-name>]
-rnow stop <RUN_ID>
-
-# Testing
-rnow test [-n <count>] [--verbose] [--entry <indices>]
-rnow test --model <model> --output-dir <dir>
-
-# Models
-rnow download <RUN_ID> [-o <output-dir>]
 ```

@@ -3201,7 +3201,7 @@ wheels = [
 
 [[package]]
 name = "rnow"
-version = "0.4.6"
+version = "0.4.8"
 source = { editable = "." }
 dependencies = [
     { name = "boto3" },
@@ -3214,6 +3214,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "pyyaml" },
     { name = "requests" },
+    { name = "rich" },
     { name = "tokenizers" },
 ]
 
@@ -3253,6 +3254,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.0.0" },
     { name = "pyyaml", specifier = ">=5.4.0" },
     { name = "requests", specifier = ">=2.25.0" },
+    { name = "rich", specifier = ">=13.0.0" },
     { name = "tinker-cookbook", marker = "extra == 'all'", specifier = ">=0.1.0" },
     { name = "tinker-cookbook", marker = "extra == 'test'", specifier = ">=0.1.0" },
     { name = "tokenizers", specifier = ">=0.15.0" },
