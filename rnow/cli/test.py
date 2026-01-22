@@ -672,10 +672,17 @@ async def _test_async(
                 raise SystemExit(1)
         raise click.ClickException(f"Failed to parse config.yml: {e}")
 
-    if config.dataset_type.value != "rl":
+    if config.dataset_type.value not in ("rl", "distill"):
         raise click.ClickException(
-            f"rnow test only supports RL projects (dataset_type: rl). "
+            f"rnow test only supports RL and distillation projects. "
             f"Found: {config.dataset_type.value}"
+        )
+
+    # Distillation testing requires teacher model - not yet supported locally
+    if config.dataset_type.value == "distill":
+        raise click.ClickException(
+            "Local testing for distillation is not yet supported. "
+            "Use 'rnow run' to start distillation training on the platform."
         )
 
     rewards_path = project_dir / "rewards.py"

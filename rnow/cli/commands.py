@@ -490,6 +490,7 @@ def validate_train_jsonl(
     from pydantic import ValidationError
 
     errors = []
+    # RL requires rewards field, SFT and DISTILL do not
     EntryModel = models.TrainEntryRL if dataset_type == models.DatasetType.RL else models.TrainEntry
 
     try:
@@ -1293,7 +1294,6 @@ def init(template: str, name: str, dataset: str, yes: bool):
     # Generate new IDs
     project_id = str(uuid.uuid4())
     dataset_id = str(uuid.uuid4())
-    org_id = get_active_organization()
 
     # Update config.yml with actual IDs
     config_path = project_dir / "config.yml"
@@ -1301,12 +1301,13 @@ def init(template: str, name: str, dataset: str, yes: bool):
         with open(config_path) as f:
             config_data = yaml.safe_load(f)
 
-        # Update IDs and name
+        # Update IDs and name (organization_id NOT stored in config - comes from CLI)
         config_data["project_id"] = project_id
         config_data["project_name"] = project_name
         config_data["dataset_id"] = dataset_id
         config_data["dataset_name"] = dataset_name
-        config_data["organization_id"] = org_id
+        # Remove organization_id if present (legacy cleanup)
+        config_data.pop("organization_id", None)
 
         # Reorder keys to ensure proper field ordering in output
         key_order = [
@@ -1315,7 +1316,6 @@ def init(template: str, name: str, dataset: str, yes: bool):
             "dataset_id",
             "dataset_name",
             "dataset_type",
-            "organization_id",
             "data",
             "model",
             "algorithm",
@@ -1331,22 +1331,24 @@ def init(template: str, name: str, dataset: str, yes: bool):
         with open(config_path, "w") as f:
             yaml.dump(ordered_config, f, default_flow_style=False, sort_keys=False)
     else:
-        # Create new config for blank template
+        # Create new config for blank template (organization_id NOT stored - comes from CLI)
         config = models.ProjectConfig(
             project_id=project_id,
             project_name=project_name,
             dataset_id=dataset_id,
             dataset_name=dataset_name,
             dataset_type=models.DatasetType.RL,
-            organization_id=org_id,
             data=models.DataConfig(batch_size=2, group_size=16),
             model=models.ModelConfig(path="Qwen/Qwen3-8B"),
             trainer=models.TrainerConfig(num_epochs=30),
         )
 
         with open(config_path, "w") as f:
+            # Exclude organization_id from config file
+            config_dict = config.model_dump(mode="json", exclude_none=True)
+            config_dict.pop("organization_id", None)
             yaml.dump(
-                config.model_dump(mode="json", exclude_none=True),
+                config_dict,
                 f,
                 default_flow_style=False,
                 sort_keys=False,
@@ -1475,8 +1477,14 @@ def _submit_single_run(
     except ValidationError as e:
         raise click.ClickException(format_validation_error(e))
 
+    # Get organization from CLI setting (not from config.yml)
+    config.organization_id = get_active_organization()
     if not config.organization_id:
-        config.organization_id = get_active_organization()
+        raise click.ClickException(
+            "No organization selected. Run "
+            + click.style("rnow orgs", fg=TEAL_RGB)
+            + " to select one."
+        )
 
     # Validate required files
     required_files = {"train.jsonl": dir / "train.jsonl"}
@@ -1677,6 +1685,20 @@ def _submit_single_run(
         tmp_config_path.unlink(missing_ok=True)
 
     if error_msg:
+        # Add helpful hint for organization access errors
+        if "organization" in error_msg.lower():
+            click.echo()
+            click.echo(click.style("Hint:", fg="yellow", bold=True) + " Try one of the following:")
+            click.echo(
+                "  1. Restart your terminal and run "
+                + click.style("rnow login", fg=TEAL_RGB)
+                + " again"
+            )
+            click.echo("  2. Select an organization with " + click.style("rnow orgs", fg=TEAL_RGB))
+            click.echo(
+                "  3. Check your organizations at "
+                + click.style("https://www.reinforcenow.ai/organizations", fg=TEAL_RGB)
+            )
         raise click.ClickException(error_msg)
 
     return {"run_id": run_id, "run_url": run_url}
@@ -1894,8 +1916,14 @@ def run(
             )
         raise click.ClickException("Please fix config before submitting")
 
+    # Get organization from CLI setting (not from config.yml)
+    config.organization_id = get_active_organization()
     if not config.organization_id:
-        config.organization_id = get_active_organization()
+        raise click.ClickException(
+            "No organization selected. Run "
+            + click.style("rnow orgs", fg=TEAL_RGB)
+            + " to select one."
+        )
 
     # Load secrets from .env file if it exists
     secret_values = {}
@@ -1932,7 +1960,7 @@ def run(
         "train.jsonl": dir / "train.jsonl",
     }
 
-    # Only require rewards.py for RL datasets
+    # Only require rewards.py for RL datasets (not SFT or DISTILL)
     if config.dataset_type == models.DatasetType.RL:
         required_files["rewards.py"] = dir / "rewards.py"
 
@@ -1973,8 +2001,11 @@ def run(
                 click.echo(f"  • {err}")
             raise click.ClickException("Please fix train.jsonl format before submitting")
 
-        # Validate max_tokens vs prompt size for RL (including tool definitions)
-        if config.dataset_type == models.DatasetType.RL and config.rollout:
+        # Validate max_tokens vs prompt size for RL and DISTILL (including tool definitions)
+        if (
+            config.dataset_type in (models.DatasetType.RL, models.DatasetType.DISTILL)
+            and config.rollout
+        ):
             # Get model path for accurate tokenization
             model_path = config.model.path if config.model else ""
 
@@ -2335,6 +2366,20 @@ def run(
     if error_msg:
         spinner.stop()  # Clear cube on error
         click.echo(click.style(f"✗ {error_msg}", fg="red", bold=True))
+        # Add helpful hint for organization access errors
+        if "organization" in error_msg.lower():
+            click.echo()
+            click.echo(click.style("Hint:", fg="yellow", bold=True) + " Try one of the following:")
+            click.echo(
+                "  1. Restart your terminal and run "
+                + click.style("rnow login", fg=TEAL_RGB)
+                + " again"
+            )
+            click.echo("  2. Select an organization with " + click.style("rnow orgs", fg=TEAL_RGB))
+            click.echo(
+                "  3. Check your organizations at "
+                + click.style("https://www.reinforcenow.ai/organizations", fg=TEAL_RGB)
+            )
         raise click.ClickException("Training submission failed")
 
     # Stop spinner but keep cube visible on success

@@ -6,7 +6,7 @@ allowed-tools: Read, Edit, Write, Bash, Grep, Glob
 
 # ReinforceNow Configuration
 
-This guide covers config.yml and train.jsonl setup for RL and SFT training.
+This guide covers config.yml and train.jsonl setup for RL, SFT, and Distillation training.
 
 ## Project Structure
 
@@ -14,8 +14,8 @@ This guide covers config.yml and train.jsonl setup for RL and SFT training.
 my_project/
 ├── config.yml          # Training configuration (required)
 ├── train.jsonl         # Training data (required)
-├── rewards.py          # Reward functions (required for RL)
-├── tools.py            # Tool definitions (optional)
+├── rewards.py          # Reward functions (required for RL, not needed for SFT/Distillation)
+├── tools.py            # Tool definitions (optional, RL only)
 └── requirements.txt    # Python dependencies (optional)
 ```
 
@@ -58,6 +58,39 @@ trainer:
   num_epochs: 10
   learning_rate: 0.0001
 ```
+
+### Minimal Distillation Config
+
+On-policy distillation trains a student model to match a teacher model's behavior. The student generates, the teacher grades each token, and KL divergence provides supervision.
+
+```yaml
+project_name: "My Distillation Project"
+dataset_type: distill
+
+data:
+  train_file: train.jsonl
+  batch_size: 8
+  group_size: 4
+
+model:
+  path: Qwen/Qwen3-8B        # Student model
+
+teacher:
+  path: Qwen/Qwen3-32B       # Teacher model (larger)
+
+rollout:
+  max_tokens: 8192
+
+trainer:
+  num_epochs: 3
+  learning_rate: 0.0001
+```
+
+**Key points:**
+- No `rewards.py` needed - teacher provides all supervision via KL penalty
+- Student generates on its own distribution (on-policy)
+- Teacher computes log probabilities for each token
+- KL penalty coefficient is 1.0 (full weight on teacher supervision)
 
 ### Full RL Config (All Options)
 
@@ -179,6 +212,24 @@ model:
 
 The CLI submits separate runs for each model.
 
+### teacher (Distillation only)
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `path` | Yes | Teacher model name (must be a supported model) |
+
+The teacher provides supervision via reverse KL divergence. Use a larger/more capable model as teacher:
+
+```yaml
+teacher:
+  path: Qwen/Qwen3-32B  # 32B teacher distilling to 8B student
+```
+
+**Teacher selection tips:**
+- Use a model from the same family (e.g., Qwen teacher for Qwen student)
+- Larger teachers generally produce better students
+- Teacher must be a supported model (see model list above)
+
 ### algorithm (RL only)
 
 | Field | Default | Options |
@@ -192,7 +243,7 @@ The CLI submits separate runs for each model.
 - Lower `kl_penalty_coef` (0.001) for more exploration
 - Higher `kl_penalty_coef` (0.1) for stability
 
-### rollout (RL only)
+### rollout (RL and Distillation)
 
 | Field | Default | Description |
 |-------|---------|-------------|
@@ -507,16 +558,49 @@ trainer:
   eval_step: 100
 ```
 
+### Distillation for Reasoning
+
+```yaml
+project_name: "Distilled Reasoning Model"
+dataset_type: distill
+
+data:
+  train_file: train.jsonl
+  batch_size: 8
+  group_size: 4
+
+model:
+  path: Qwen/Qwen3-8B          # Student
+  qlora_rank: 32
+
+teacher:
+  path: Qwen/Qwen3-32B         # Teacher
+
+rollout:
+  max_tokens: 8192             # Enough for reasoning
+
+trainer:
+  num_epochs: 3
+  learning_rate: 0.0001
+  save_step: 20
+```
+
+**When to use distillation:**
+- Transfer reasoning capabilities from a large model to a smaller one
+- Create a cost-effective model that approximates a larger model's behavior
+- On-policy distillation avoids exposure bias (student learns from its own mistakes)
+
 ---
 
 ## Validation Rules
 
 1. **batch_size * group_size <= 2048**
 2. **qlora_rank <= model's max rank**
-3. **Rewards in train.jsonl must exist in rewards.py**
-4. **Tools in train.jsonl must exist in tools.py**
-5. **sandbox=True requires docker field**
+3. **Rewards in train.jsonl must exist in rewards.py** (RL only)
+4. **Tools in train.jsonl must exist in tools.py** (RL only)
+5. **sandbox=True requires docker field** (RL only)
 6. **max_tokens must fit in context window**
+7. **Distillation requires teacher section** with valid model path
 
 ## Testing Configuration
 

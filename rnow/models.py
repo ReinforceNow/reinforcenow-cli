@@ -41,6 +41,7 @@ class OrgRole(str, Enum):
 class DatasetType(str, Enum):
     SFT = "sft"  # Supervised Finetuning
     RL = "rl"  # Reinforcement Learning
+    DISTILL = "distill"  # On-policy Distillation
 
 
 class LossFunction(str, Enum):
@@ -344,6 +345,14 @@ class ModelConfig(BaseModel):
     )
 
 
+class TeacherConfig(BaseModel):
+    """Teacher model configuration for on-policy distillation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    path: str = Field(..., description="Teacher model path (e.g., 'Qwen/Qwen3-32B')")
+
+
 class AlgorithmConfig(BaseModel):
     """Algorithm configuration for RL training."""
 
@@ -414,7 +423,8 @@ class ProjectConfig(BaseModel):
     model: ModelConfig = Field(...)
     trainer: TrainerConfig = Field(...)
     algorithm: AlgorithmConfig | None = None  # RL only
-    rollout: RolloutConfig | None = None  # RL only
+    rollout: RolloutConfig | None = None  # RL and DISTILL
+    teacher: TeacherConfig | None = None  # DISTILL only
 
     @model_validator(mode="after")
     def validate_config(self):
@@ -425,10 +435,34 @@ class ProjectConfig(BaseModel):
                 self.algorithm = AlgorithmConfig()
             if self.rollout is None:
                 self.rollout = RolloutConfig()
+            # Clear distill-specific config
+            self.teacher = None
+
+        elif self.dataset_type == DatasetType.DISTILL:
+            # Distillation requires teacher
+            if self.teacher is None:
+                raise ValueError("dataset_type: distill requires 'teacher' section")
+
+            # Validate teacher model is supported
+            teacher_path = self.teacher.path
+            if "/" in teacher_path and teacher_path not in SUPPORTED_MODELS_SET:
+                raise ValueError(
+                    f"Unsupported teacher model: {teacher_path}. "
+                    f"Supported models: {', '.join(sorted(SUPPORTED_MODELS_SET))}"
+                )
+
+            # Distillation needs rollout config for sampling
+            if self.rollout is None:
+                self.rollout = RolloutConfig()
+
+            # No algorithm section for distillation (uses fixed KL settings per Thinking Machines blog)
+            self.algorithm = None
+
         else:  # SFT
-            # Clear RL-specific configs for SFT
+            # Clear RL/distill-specific configs for SFT
             self.algorithm = None
             self.rollout = None
+            self.teacher = None
 
         # Validate model path and qlora_rank
         # Only validate for standard model paths (model IDs for finetuned models are validated server-side)
