@@ -7,7 +7,6 @@ organization_id: ""
 data:
   train_file: train.jsonl
   batch_size: 16
-  val_split: 0.2
 model:
   path: Qwen/Qwen3-8B
   qlora_rank: 128

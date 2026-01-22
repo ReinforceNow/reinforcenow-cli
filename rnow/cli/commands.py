@@ -534,6 +534,29 @@ def validate_train_jsonl(
     return errors
 
 
+def count_train_jsonl_samples(path: Path) -> int:
+    """
+    Count the number of valid JSON lines (samples) in train.jsonl.
+
+    Returns:
+        Number of non-empty JSON lines in the file.
+    """
+    count = 0
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                stripped = line.strip()
+                if stripped:
+                    try:
+                        json.loads(stripped)
+                        count += 1
+                    except json.JSONDecodeError:
+                        continue
+    except Exception:
+        return 0
+    return count
+
+
 from functools import lru_cache
 
 
@@ -1118,6 +1141,8 @@ def orgs(ctx, org_id: str | None):
             "tutorial-reward",
             "tutorial-tool",
             "web-tasks",
+            "off-distill-agent",
+            "on-distill-agent",
         ]
     ),
     default="start",
@@ -1167,6 +1192,8 @@ def init(template: str, name: str, dataset: str, yes: bool):
         "adaptllm-finance": "adaptllm-finance-project",
         "food-extract": "food-extract-project",
         "web-tasks": "web-tasks",
+        "off-distill-agent": "off-distill-agent",
+        "on-distill-agent": "on-distill-agent",
         "new": "new-project",
         "blank": "my-project",
     }
@@ -1503,6 +1530,15 @@ def _submit_single_run(
         jsonl_errors = validate_train_jsonl(train_jsonl_path, config.dataset_type)
         if jsonl_errors:
             raise click.ClickException(f"Invalid train.jsonl: {jsonl_errors[0]}")
+
+        # Validate batch_size vs sample count
+        sample_count = count_train_jsonl_samples(train_jsonl_path)
+        batch_size = config.data.batch_size if config.data else 4
+        if sample_count < batch_size:
+            raise click.ClickException(
+                f"batch_size ({batch_size}) exceeds training samples ({sample_count}). "
+                f"Add more samples or reduce batch_size to {sample_count} or less"
+            )
 
         # Validate sandbox=True functions require docker field in train.jsonl
         sandbox_errors = validate_sandbox_docker_requirement(
@@ -2001,119 +2037,128 @@ def run(
                 click.echo(f"  • {err}")
             raise click.ClickException("Please fix train.jsonl format before submitting")
 
-        # Validate max_tokens vs prompt size for RL and DISTILL (including tool definitions)
-        if (
-            config.dataset_type in (models.DatasetType.RL, models.DatasetType.DISTILL)
-            and config.rollout
-        ):
-            # Get model path for accurate tokenization
-            model_path = config.model.path if config.model else ""
+        # Validate batch_size vs sample count
+        sample_count = count_train_jsonl_samples(train_jsonl_path)
+        batch_size = config.data.batch_size if config.data else 4
+        if sample_count < batch_size:
+            click.echo(click.style("✗ Batch size exceeds sample count:", fg="red", bold=True))
+            click.echo(f"  • train.jsonl has {sample_count} samples")
+            click.echo(f"  • config.yml has batch_size={batch_size}")
+            click.echo()
+            click.echo(f"  Either add more samples to train.jsonl (need at least {batch_size})")
+            click.echo(f"  or reduce batch_size in config.yml to {sample_count} or less")
+            raise click.ClickException("batch_size cannot exceed number of training samples")
 
-            # Try to load tokenizer (show message if loading)
-            if model_path:
-                click.echo(click.style("Loading tokenizer...", dim=True), nl=False)
-                tokenizer_info = get_tokenizer_for_model(model_path)
-                if tokenizer_info:
-                    tokenizer_type = tokenizer_info[0]
-                    label = "Harmony" if tokenizer_type == "harmony" else "HuggingFace"
-                    click.echo(
-                        "\r"
-                        + click.style("Tokenizer: ", fg=TEAL_RGB)
-                        + f"{label} ({model_path})"
-                        + " " * 10
-                    )
-                else:
-                    click.echo(
-                        "\r"
-                        + click.style("Tokenizer: ", fg="yellow")
-                        + "not available, using estimates"
-                        + " " * 10
-                    )
+    # Get model path for use throughout validation
+    model_path = config.model.path if config.model else ""
 
-            # Collect all tools
-            all_tools = []
-
-            # Get tools from tools.py
-            tools_path = dir / "tools.py"
-            tools_py_tools = get_tools_from_tools_py(tools_path)
-            all_tools.extend(tools_py_tools)
-
-            # Fetch MCP tool schemas (with progress indicator)
-            mcp_urls = config.rollout.mcp_url if config.rollout else None
-            if mcp_urls:
-                # Check if fastmcp is installed
-                try:
-                    import fastmcp  # noqa: F401
-                except ImportError:
-                    click.echo()
-                    click.echo(click.style("✗ MCP support requires fastmcp", fg="red", bold=True))
-                    click.echo()
-                    click.echo("  Your config.yml uses mcp_url, but fastmcp is not installed")
-                    click.echo("  in the same Python environment as rnow.")
-                    click.echo()
-                    click.echo(f"  rnow is running from: {click.style(sys.executable, dim=True)}")
-                    click.echo()
-                    click.echo("  Install it with:")
-                    click.echo(click.style("    uv pip install fastmcp", fg=TEAL_RGB))
-                    click.echo()
-                    raise click.ClickException("Missing dependency: fastmcp")
-
-                click.echo(click.style("Fetching MCP tools...", dim=True), nl=False)
-                mcp_tools, mcp_error = fetch_mcp_tool_schemas(mcp_urls, timeout=15.0)
-                if mcp_error:
-                    click.echo(
-                        "\r" + click.style("MCP: ", fg="red") + f"failed ({mcp_error})" + " " * 20
-                    )
-                    raise click.ClickException(f"Failed to fetch MCP tools: {mcp_error}")
-
-                all_tools.extend(mcp_tools)
+    if (
+        train_jsonl_path.exists()
+        and train_jsonl_path.stat().st_size > 0
+        and config.dataset_type in (models.DatasetType.RL, models.DatasetType.DISTILL)
+        and config.rollout
+    ):
+        # Try to load tokenizer (show message if loading)
+        if model_path:
+            click.echo(click.style("Loading tokenizer...", dim=True), nl=False)
+            tokenizer_info = get_tokenizer_for_model(model_path)
+            if tokenizer_info:
+                tokenizer_type = tokenizer_info[0]
+                label = "Harmony" if tokenizer_type == "harmony" else "HuggingFace"
                 click.echo(
-                    "\r" + click.style("MCP: ", fg=TEAL_RGB) + f"{len(mcp_tools)} tools" + " " * 20
+                    "\r"
+                    + click.style("Tokenizer: ", fg=TEAL_RGB)
+                    + f"{label} ({model_path})"
+                    + " " * 10
                 )
-
-            # Count tokens with proper format (includes Harmony rendering for gpt-oss)
-            total_prompt_tokens = get_max_prompt_tokens(train_jsonl_path, all_tools, model_path)
-
-            # Show context window usage
-            if total_prompt_tokens > 0:
-                is_gpt_oss = "gpt-oss" in model_path.lower()
-                format_note = " (Harmony format)" if is_gpt_oss else ""
+            else:
                 click.echo(
-                    click.style("Context: ", fg=TEAL_RGB)
-                    + f"~{total_prompt_tokens:,} prompt+tools{format_note}"
-                    + f" + {config.rollout.max_tokens:,} max_tokens"
-                    + f" = ~{total_prompt_tokens + config.rollout.max_tokens:,}"
-                    + f" / {models.MAX_CONTEXT_WINDOW:,}"
+                    "\r"
+                    + click.style("Tokenizer: ", fg="yellow")
+                    + "not available, using estimates"
+                    + " " * 10
                 )
-                context_error, recommended = validate_max_tokens_for_context(
-                    config.rollout.max_tokens, total_prompt_tokens
+
+        # Collect all tools
+        all_tools = []
+
+        # Get tools from tools.py
+        tools_path = dir / "tools.py"
+        tools_py_tools = get_tools_from_tools_py(tools_path)
+        all_tools.extend(tools_py_tools)
+
+        # Fetch MCP tool schemas (with progress indicator)
+        mcp_urls = config.rollout.mcp_url if config.rollout else None
+        if mcp_urls:
+            # Check if fastmcp is installed
+            try:
+                import fastmcp  # noqa: F401
+            except ImportError:
+                click.echo()
+                click.echo(click.style("✗ MCP support requires fastmcp", fg="red", bold=True))
+                click.echo()
+                click.echo("  Your config.yml uses mcp_url, but fastmcp is not installed")
+                click.echo("  in the same Python environment as rnow.")
+                click.echo()
+                click.echo(f"  rnow is running from: {click.style(sys.executable, dim=True)}")
+                click.echo()
+                click.echo("  Install it with:")
+                click.echo(click.style("    uv pip install fastmcp", fg=TEAL_RGB))
+                click.echo()
+                raise click.ClickException("Missing dependency: fastmcp")
+
+            click.echo(click.style("Fetching MCP tools...", dim=True), nl=False)
+            mcp_tools, mcp_error = fetch_mcp_tool_schemas(mcp_urls, timeout=15.0)
+            if mcp_error:
+                click.echo(
+                    "\r" + click.style("MCP: ", fg="red") + f"failed ({mcp_error})" + " " * 20
                 )
-                if context_error:
-                    click.echo()
-                    click.echo(click.style("✗ Context window exceeded", fg="red", bold=True))
-                    click.echo()
+                raise click.ClickException(f"Failed to fetch MCP tools: {mcp_error}")
+
+            all_tools.extend(mcp_tools)
+            click.echo(
+                "\r" + click.style("MCP: ", fg=TEAL_RGB) + f"{len(mcp_tools)} tools" + " " * 20
+            )
+
+        # Count tokens with proper format (includes Harmony rendering for gpt-oss)
+        total_prompt_tokens = get_max_prompt_tokens(train_jsonl_path, all_tools, model_path)
+
+        # Show context window usage
+        if total_prompt_tokens > 0:
+            is_gpt_oss = "gpt-oss" in model_path.lower()
+            format_note = " (Harmony format)" if is_gpt_oss else ""
+            click.echo(
+                click.style("Context: ", fg=TEAL_RGB)
+                + f"~{total_prompt_tokens:,} prompt+tools{format_note}"
+                + f" + {config.rollout.max_tokens:,} max_tokens"
+                + f" = ~{total_prompt_tokens + config.rollout.max_tokens:,}"
+                + f" / {models.MAX_CONTEXT_WINDOW:,}"
+            )
+            context_error, recommended = validate_max_tokens_for_context(
+                config.rollout.max_tokens, total_prompt_tokens
+            )
+            if context_error:
+                click.echo()
+                click.echo(click.style("✗ Context window exceeded", fg="red", bold=True))
+                click.echo()
+                click.echo(f"  Total prompt context (with tools): ~{total_prompt_tokens:,} tokens.")
+                if is_gpt_oss:
                     click.echo(
-                        f"  Total prompt context (with tools): ~{total_prompt_tokens:,} tokens."
+                        "  Note: gpt-oss uses Harmony format which includes system overhead."
                     )
-                    if is_gpt_oss:
-                        click.echo(
-                            "  Note: gpt-oss uses Harmony format which includes system overhead."
-                        )
-                    click.echo(
-                        f"  With max_tokens={config.rollout.max_tokens:,}, the total exceeds"
-                    )
-                    click.echo(f"  the {models.MAX_CONTEXT_WINDOW:,} token context window.")
-                    click.echo()
-                    click.echo(
-                        click.style("  Fix:", bold=True)
-                        + f" Set rollout.max_tokens to {recommended:,} or less"
-                    )
-                    click.echo()
-                    click.echo(click.style("  In config.yml:", dim=True))
-                    click.echo(click.style("    rollout:", dim=True))
-                    click.echo(f"      max_tokens: {click.style(str(recommended), fg=TEAL_RGB)}")
-                    click.echo()
-                    raise click.ClickException("max_tokens + prompt length exceeds context window")
+                click.echo(f"  With max_tokens={config.rollout.max_tokens:,}, the total exceeds")
+                click.echo(f"  the {models.MAX_CONTEXT_WINDOW:,} token context window.")
+                click.echo()
+                click.echo(
+                    click.style("  Fix:", bold=True)
+                    + f" Set rollout.max_tokens to {recommended:,} or less"
+                )
+                click.echo()
+                click.echo(click.style("  In config.yml:", dim=True))
+                click.echo(click.style("    rollout:", dim=True))
+                click.echo(f"      max_tokens: {click.style(str(recommended), fg=TEAL_RGB)}")
+                click.echo()
+                raise click.ClickException("max_tokens + prompt length exceeds context window")
 
     # Validate requirements.txt if present (check format and Python 3.11 compatibility)
     requirements_path = dir / "requirements.txt"

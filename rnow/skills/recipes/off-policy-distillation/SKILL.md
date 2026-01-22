@@ -1,98 +1,156 @@
 ---
 name: off-policy-distillation
-description: Generate training data from teacher models for off-policy distillation. Use when converting prompts to SFT datasets using larger models, generating teacher completions, or preparing data for knowledge distillation. Triggers on "distillation", "teacher model", "generate completions", "OpenRouter", "off-policy", "knowledge transfer".
+description: Generate training data from teacher models for off-policy distillation. Use when converting prompts to SFT datasets using larger models, generating teacher completions with tools, or preparing data for knowledge distillation. Triggers on "distillation", "teacher model", "generate completions", "OpenRouter", "off-policy", "knowledge transfer".
 allowed-tools: Read, Edit, Write, Bash, Grep, Glob
 ---
 
 # Off-Policy Distillation
 
-Off-policy distillation trains a smaller "student" model to imitate a larger "teacher" model by learning from teacher-generated examples.
+Generate training data by running a teacher model (e.g., GPT-4o) with tools, then train a student model via SFT.
+
+> **IMPORTANT**: This is SFT training - **NO `rewards.py` needed**. The student learns by imitating teacher responses.
+
+## Setup
+
+```bash
+# 1. Create venv with Python 3.11+ using uv
+uv venv --python 3.11
+
+# 2. Activate the venv
+source .venv/bin/activate
+
+# 3. Install dependencies
+uv pip install httpx tqdm crawl4ai nest_asyncio
+
+# 4. Setup crawl4ai browser (required once)
+crawl4ai-setup
+
+# 5. Set OpenRouter API key
+echo "OPENROUTER_API_KEY=sk-or-v1-your-key-here" > .env
+```
+
+## Quick Start
+
+```bash
+# 1. Generate teacher completions with tool use
+python generate_distillation_data.py prompts.jsonl \
+  --model openai/gpt-4o-mini \
+  --tools tools.py \
+  --output train.jsonl
+
+# 2. Train (SFT - no rewards needed)
+rnow run
+```
+
+---
 
 ## How It Works
 
-1. **Start with prompts** - A dataset of user messages/tasks
-2. **Generate teacher responses** - Run prompts through a capable teacher model
-3. **Train with SFT** - Fine-tune the student on teacher responses
+1. **Prepare prompts** - A list of tasks/questions
+2. **Run agentic rollouts** - Teacher model uses tools (e.g., browse) to solve tasks
+3. **Save conversations** - Full multi-turn conversations with tool calls saved to train.jsonl
+4. **Train with SFT** - Student learns to imitate the teacher's responses AND tool use
 
-This transfers the teacher's capabilities to a smaller, faster model.
+---
 
-## When to Use
+## Script: generate_distillation_data.py
 
-- **Knowledge transfer**: Distill a 70B model's capabilities into an 8B model
-- **Cost reduction**: Create a cheaper model that mimics expensive API models
-- **Faster inference**: Smaller models for production deployment
-- **Domain specialization**: Focus a general model on specific tasks
+Runs concurrent agentic rollouts with adaptive rate limiting.
 
-## Step-by-Step Guide
+### Usage
 
-### Step 1: Prepare Your Prompts
+```bash
+# Basic - agentic with tools
+python generate_distillation_data.py prompts.jsonl --tools tools.py
 
-Create a file with your prompts (one per line or JSONL):
+# No tools - simple completions
+python generate_distillation_data.py prompts.jsonl --tools none
+
+# Custom model and concurrency
+python generate_distillation_data.py prompts.jsonl \
+  --model openai/gpt-4o \
+  --concurrency 10 \
+  --max-turns 15
+```
+
+### Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `input` | required | Input prompts file (txt or jsonl) |
+| `-o, --output` | train.jsonl | Output file |
+| `-t, --tools` | tools.py | Tools file (use 'none' to disable) |
+| `-m, --model` | openai/gpt-4o-mini | Teacher model (OpenRouter format) |
+| `-s, --system` | None | System prompt |
+| `-n, --num` | None | Max prompts to process |
+| `-c, --concurrency` | 20 | Initial concurrent requests (adapts on rate limits) |
+| `--max-tokens` | 2048 | Max tokens per response |
+| `--max-turns` | 10 | Max turns per rollout |
+| `--temperature` | 0.7 | Sampling temperature |
+
+### Input Format
 
 **prompts.txt** (simple):
 ```
-What is photosynthesis?
-Explain quantum computing in simple terms.
-Write a Python function to sort a list.
+Find the active ingredient in NCT01234567
+What was the FDA approval date for Keytruda?
 ```
 
 **prompts.jsonl** (with metadata):
 ```json
-{"prompt": "What is photosynthesis?", "category": "science"}
-{"prompt": "Explain quantum computing", "category": "tech"}
-{"prompt": "Write a sorting function", "category": "code"}
+{"prompt": "Find the active ingredient in NCT01234567", "metadata": {"expected_answer": "pembrolizumab"}}
+{"prompt": "What was the FDA approval date for Keytruda?", "metadata": {"expected_answer": "2014-09-04"}}
 ```
 
-### Step 2: Get an OpenRouter API Key
+### Output Format
 
-1. Go to [openrouter.ai](https://openrouter.ai)
-2. Create an account and add credits
-3. Generate an API key from the dashboard
-
-### Step 3: Set Up Environment
-
-```bash
-# Create .env file with your API key
-echo "OPENROUTER_API_KEY=sk-or-v1-your-key-here" > .env
-
-# Install dependencies (if not using rnow's built-in)
-pip install httpx python-dotenv tqdm
+Full conversations with tool calls:
+```json
+{
+  "messages": [
+    {"role": "user", "content": "Find the active ingredient in NCT01234567"},
+    {"role": "assistant", "content": "", "tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "browse", "arguments": "{\"url\": \"https://clinicaltrials.gov/study/NCT01234567\"}"}}]},
+    {"role": "tool", "tool_call_id": "call_1", "content": "# Study NCT01234567\n\nIntervention: Pembrolizumab 200mg..."},
+    {"role": "assistant", "content": "The active ingredient is pembrolizumab."}
+  ],
+  "metadata": {"teacher": "openai/gpt-4o-mini", "turns": 2},
+  "tools": ["browse"]
+}
 ```
 
-### Step 4: Generate Teacher Completions
+---
 
-Use the provided script to generate completions concurrently:
+## tools.py - Browse Tool
 
-```bash
-# Basic usage
-python generate_teacher_data.py \
-  --input prompts.txt \
-  --output train.jsonl \
-  --model anthropic/claude-sonnet-4
+The included `tools.py` uses Crawl4AI for web browsing:
 
-# With options
-python generate_teacher_data.py \
-  --input prompts.jsonl \
-  --output train.jsonl \
-  --model openai/gpt-5.2 \
-  --system "You are a helpful math tutor." \
-  --max-tokens 2048 \
-  --temperature 0.7 \
-  --concurrency 10
+```python
+@tool
+def browse(url: str) -> str:
+    """Browse a URL and return its content as markdown."""
+    # Uses Crawl4AI to fetch and convert page to markdown
 ```
 
-### Step 5: Configure SFT Training
+You can add more tools as needed:
 
-Create `config.yml`:
+```python
+@tool
+def search(query: str) -> str:
+    """Search the web for information."""
+    # Your search implementation
+```
+
+---
+
+## config.yml for SFT
 
 ```yaml
-project_name: "Distilled Model"
-dataset_type: sft
+project_name: "Distilled Agent"
+dataset_type: sft  # No rewards needed
 
 data:
   train_file: train.jsonl
-  batch_size: 8
-  val_split: 0.1
+  batch_size: 4
 
 model:
   path: Qwen/Qwen3-8B
@@ -103,57 +161,7 @@ trainer:
   learning_rate: 0.00005
 ```
 
-### Step 6: Run Training
-
-```bash
-rnow run
-```
-
----
-
-## Script Reference: generate_teacher_data.py
-
-The script handles concurrent API calls to generate teacher completions efficiently.
-
-### Command Line Options
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--input` | required | Input file (txt or jsonl) |
-| `--output` | train.jsonl | Output file path |
-| `--model` | anthropic/claude-sonnet-4 | Teacher model (OpenRouter format) |
-| `--system` | None | System prompt for all completions |
-| `--max-tokens` | 2048 | Max tokens per completion |
-| `--temperature` | 0.7 | Sampling temperature |
-| `--concurrency` | 5 | Parallel requests |
-| `--timeout` | 120 | Request timeout in seconds |
-
-### Input Formats
-
-**Plain text** (prompts.txt):
-```
-First prompt here
-Second prompt here
-```
-
-**JSONL** (prompts.jsonl):
-```json
-{"prompt": "First prompt", "system": "Custom system prompt"}
-{"prompt": "Second prompt", "metadata": {"category": "math"}}
-```
-
-JSONL entries can include:
-- `prompt` (required): The user message
-- `system` (optional): Per-entry system prompt (overrides --system)
-- `metadata` (optional): Preserved in output for use in rewards
-
-### Output Format
-
-Generated `train.jsonl` is ready for SFT:
-
-```json
-{"messages": [{"role": "system", "content": "..."}, {"role": "user", "content": "What is 2+2?"}, {"role": "assistant", "content": "The answer is 4."}], "metadata": {"teacher": "openai/gpt-5.2", "category": "math"}}
-```
+**Note**: No `rewards.py` is needed - SFT learns from teacher examples directly.
 
 ---
 
@@ -161,119 +169,71 @@ Generated `train.jsonl` is ready for SFT:
 
 | Model | Best For | Cost |
 |-------|----------|------|
-| `anthropic/claude-sonnet-4` | General, reasoning | Medium |
-| `openai/gpt-5.2` | Broad capabilities | Medium |
-| `openai/o3` | Complex reasoning | High |
-| `deepseek/deepseek-r1` | Math, code | Low |
-| `google/gemini-2.5-pro` | Long context | Medium |
+| `openai/gpt-4o-mini` | Fast, cheap, good for browsing | Low |
+| `openai/gpt-4o` | Better reasoning | Medium |
+| `anthropic/claude-sonnet-4` | Complex tasks | Medium |
+| `openai/o3` | Deep reasoning | High |
 
 See [openrouter.ai/models](https://openrouter.ai/models) for full list.
 
 ---
 
-## Tips for Quality Distillation
+## Tips
 
-### 1. Use High Temperature for Diversity
+### 1. Use Metadata for Later RL
 
-```bash
-python generate_teacher_data.py --temperature 0.9 --input prompts.txt
-```
-
-Higher temperature creates more diverse training examples.
-
-### 2. Generate Multiple Completions Per Prompt
-
-Run the script multiple times with different seeds or use `--samples`:
-
-```bash
-# Generate 3 completions per prompt
-python generate_teacher_data.py --samples 3 --input prompts.txt
-```
-
-### 3. Filter Low-Quality Responses
-
-After generation, filter responses that are too short or contain errors:
-
-```python
-import json
-
-with open("train.jsonl") as f:
-    entries = [json.loads(line) for line in f]
-
-# Filter: keep responses > 100 chars
-filtered = [e for e in entries if len(e["messages"][-1]["content"]) > 100]
-
-with open("train_filtered.jsonl", "w") as f:
-    for entry in filtered:
-        f.write(json.dumps(entry) + "\n")
-```
-
-### 4. Include System Prompts
-
-System prompts guide the teacher's behavior:
-
-```bash
-python generate_teacher_data.py \
-  --system "You are an expert Python programmer. Write clean, well-documented code." \
-  --input coding_prompts.txt
-```
-
-### 5. Preserve Metadata for RL Fine-Tuning
-
-If you plan to do RL after SFT, include ground truth in metadata:
+Include expected answers in metadata for potential RL fine-tuning later:
 
 ```json
 {"prompt": "What is 2+2?", "metadata": {"expected_answer": "4"}}
 ```
 
-This metadata flows through to the output for use in reward functions later.
+### 2. Filter Bad Samples
 
----
+After generation, filter out low-quality samples:
 
-## Cost Estimation
+```python
+import json
+entries = [json.loads(l) for l in open("train.jsonl")]
+# Keep only successful rollouts (assistant gave final answer)
+filtered = [e for e in entries if not e["messages"][-1].get("tool_calls")]
+```
 
-Rough estimates for 10,000 prompts (2K tokens output each):
+### 3. Resume Interrupted Generation
 
-| Model | Input Cost | Output Cost | Total |
-|-------|------------|-------------|-------|
-| claude-sonnet-4 | ~$3 | ~$15 | ~$18 |
-| gpt-5.2 | ~$2.5 | ~$10 | ~$12.5 |
-| deepseek-r1 | ~$0.5 | ~$2 | ~$2.5 |
+The script auto-resumes. Just re-run with the same output file.
 
-Check [openrouter.ai/models](https://openrouter.ai/models) for current pricing.
+### 4. Handle Rate Limits
+
+The script automatically reduces concurrency on rate limits. Start high (20) and let it adapt.
 
 ---
 
 ## Troubleshooting
 
+### Crawl4AI Setup Issues
+
+```bash
+# Make sure playwright browsers are installed
+playwright install chromium
+```
+
 ### Rate Limiting
 
-If you hit rate limits, reduce concurrency:
+The script handles this automatically. If you see many rate limits, reduce initial concurrency:
 
 ```bash
-python generate_teacher_data.py --concurrency 2 --input prompts.txt
+python generate_distillation_data.py prompts.jsonl -c 5
 ```
 
-### Timeouts
+### Tool Execution Errors
 
-For long completions, increase timeout:
+Check that tools.py dependencies are installed:
 
 ```bash
-python generate_teacher_data.py --timeout 300 --max-tokens 4096
+uv pip install crawl4ai nest_asyncio
+crawl4ai-setup
 ```
-
-### API Key Issues
-
-Ensure your `.env` file is in the current directory:
-
-```bash
-# Check .env exists and has the key
-cat .env | grep OPENROUTER
-```
-
-### Resume Interrupted Generation
-
-The script saves progress. To resume, re-run with the same output file - it skips already-generated prompts.
 
 ---
 
@@ -281,3 +241,4 @@ The script saves progress. To resume, re-run with the same output file - it skip
 
 - **rnow-config** - Configure SFT training
 - **rnow-train-jsonl** - train.jsonl format details
+- **rnow-tools** - Writing custom tools

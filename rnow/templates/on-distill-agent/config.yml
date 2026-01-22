@@ -1,0 +1,41 @@
+project_id: ""
+project_name: "on-distill-agent"
+dataset_id: ""
+dataset_name: "train"
+dataset_type: distill  # On-policy distillation (uses teacher KL penalty)
+organization_id: ""
+
+data:
+  train_file: train.jsonl
+  batch_size: 4
+  group_size: 4
+
+model:
+  path: Qwen/Qwen3-8B
+  qlora_rank: 32
+  name: "MedBrowse Agent (On-Policy Distillation)"
+  description: "Medical information-seeking agent trained with token-level KL distillation"
+
+# Teacher model for on-policy distillation
+# Use HuggingFace model IDs for full logprobs support
+# For GPT-4o/proprietary models, use off-policy distillation instead
+teacher:
+  path: Qwen/Qwen3-32B  # Teacher model (larger than student)
+
+rollout:
+  max_turns: 10  # Medical research may need multiple searches
+  max_tokens: 4096
+  termination_policy: last_tool
+  max_tool_response_chars: 8000
+  tool_timeout: 120
+
+algorithm:
+  loss_fn: ppo
+  adv_estimator: grpo
+  kl_penalty_coef: 0.1  # Token-level KL penalty weight (β)
+
+trainer:
+  num_epochs: 3
+  learning_rate: 0.0001
+  save_step: 50
+  eval_step: 50

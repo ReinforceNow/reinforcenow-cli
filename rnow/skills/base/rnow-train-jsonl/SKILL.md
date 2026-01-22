@@ -44,6 +44,39 @@ One JSON object per line. Each entry is a training example.
 {"messages": [{"role": "user", "content": "Hello"}, {"role": "assistant", "content": "Hi there!"}]}
 ```
 
+### SFT with Tool Calls (Agentic Distillation)
+
+SFT supports training on conversations with tool calls (e.g., from teacher model distillation):
+
+```json
+{
+  "messages": [
+    {"role": "user", "content": "Find the weather in Paris"},
+    {"role": "assistant", "content": "", "tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "get_weather", "arguments": "{\"city\": \"Paris\"}"}}]},
+    {"role": "tool", "tool_call_id": "call_1", "content": "72°F, sunny"},
+    {"role": "assistant", "content": "The weather in Paris is 72°F and sunny."}
+  ]
+}
+```
+
+**Tool call format** (OpenAI-compatible):
+```json
+{
+  "id": "call_xxx",
+  "type": "function",
+  "function": {
+    "name": "tool_name",
+    "arguments": "{\"arg\": \"value\"}"
+  }
+}
+```
+
+**Notes:**
+- `arguments` must be a JSON string, not an object
+- `content` can be empty string `""` when assistant makes tool calls
+- Tool results use `role: "tool"` with matching `tool_call_id`
+- Works with all model renderers (Qwen3, DeepSeek, Kimi, etc.)
+
 ### With System Prompt
 
 ```json

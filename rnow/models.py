@@ -346,11 +346,31 @@ class ModelConfig(BaseModel):
 
 
 class TeacherConfig(BaseModel):
-    """Teacher model configuration for on-policy distillation."""
+    """Teacher model configuration for on-policy distillation.
+
+    Only available when dataset_type: distill.
+    Teacher must be a supported HuggingFace model ID (e.g., 'Qwen/Qwen3-32B').
+    API models like GPT-4o or Claude are NOT supported for on-policy distillation.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     path: str = Field(..., description="Teacher model path (e.g., 'Qwen/Qwen3-32B')")
+    agentic: bool = Field(
+        default=False,
+        description="Enable agentic distillation with multi-turn tool support. Requires tools.py and rollout config.",
+    )
+
+    @model_validator(mode="after")
+    def validate_teacher_path(self):
+        """Validate that teacher path is a supported model."""
+        if self.path not in SUPPORTED_MODELS_SET:
+            raise ValueError(
+                f"Unsupported teacher model: {self.path}. "
+                f"On-policy distillation requires a supported HuggingFace model ID. "
+                f"Supported models: {', '.join(sorted(SUPPORTED_MODELS_SET))}"
+            )
+        return self
 
 
 class AlgorithmConfig(BaseModel):
@@ -435,34 +455,36 @@ class ProjectConfig(BaseModel):
                 self.algorithm = AlgorithmConfig()
             if self.rollout is None:
                 self.rollout = RolloutConfig()
-            # Clear distill-specific config
-            self.teacher = None
+            # Teacher is only for distillation
+            if self.teacher is not None:
+                raise ValueError(
+                    "'teacher' is only available for dataset_type: distill. "
+                    "For RL training, remove the 'teacher' section from config.yml."
+                )
 
         elif self.dataset_type == DatasetType.DISTILL:
-            # Distillation requires teacher
+            # Distillation requires teacher (path validation is in TeacherConfig)
             if self.teacher is None:
                 raise ValueError("dataset_type: distill requires 'teacher' section")
-
-            # Validate teacher model is supported
-            teacher_path = self.teacher.path
-            if "/" in teacher_path and teacher_path not in SUPPORTED_MODELS_SET:
-                raise ValueError(
-                    f"Unsupported teacher model: {teacher_path}. "
-                    f"Supported models: {', '.join(sorted(SUPPORTED_MODELS_SET))}"
-                )
 
             # Distillation needs rollout config for sampling
             if self.rollout is None:
                 self.rollout = RolloutConfig()
 
-            # No algorithm section for distillation (uses fixed KL settings per Thinking Machines blog)
-            self.algorithm = None
+            # Set algorithm defaults for distillation (KL penalty settings)
+            if self.algorithm is None:
+                self.algorithm = AlgorithmConfig()
 
         else:  # SFT
-            # Clear RL/distill-specific configs for SFT
+            # Teacher is only for distillation
+            if self.teacher is not None:
+                raise ValueError(
+                    "'teacher' is only available for dataset_type: distill. "
+                    "For SFT training, remove the 'teacher' section from config.yml."
+                )
+            # Clear RL-specific configs for SFT
             self.algorithm = None
             self.rollout = None
-            self.teacher = None
 
         # Validate model path and qlora_rank
         # Only validate for standard model paths (model IDs for finetuned models are validated server-side)

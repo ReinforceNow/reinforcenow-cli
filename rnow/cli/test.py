@@ -38,11 +38,32 @@ TEAL_RGB = (20, 184, 166)  # For click.style()
 console = Console()
 
 
-from rnow.models import ProjectConfig
+from rnow.models import SUPPORTED_MODELS_SET, ProjectConfig
 
 SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 
 DEFAULT_API_URL = "https://www.reinforcenow.ai"
+
+
+def is_gpu_model(model: str) -> bool:
+    """Check if model requires GPU infrastructure vs OpenAI API.
+
+    GPU models: Models in SUPPORTED_MODELS_SET (Qwen, Llama, DeepSeek, etc.)
+    OpenAI models: gpt-5.2, gpt-5-mini, gpt-5-nano, gpt-5-pro (and snapshots)
+    """
+    # Model IDs (UUIDs) are finetuned models that require GPU
+    if _looks_like_model_id(model):
+        return True
+    return model in SUPPORTED_MODELS_SET
+
+
+def _looks_like_model_id(model: str) -> bool:
+    """Check if model looks like a ReinforceNow model ID (UUID format)."""
+    import re
+
+    # UUID format: 8-4-4-4-12 hex characters
+    uuid_pattern = r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    return bool(re.match(uuid_pattern, model.lower()))
 
 
 class RolloutClient:
@@ -88,6 +109,7 @@ class RolloutClient:
         dockerfiles: dict[str, str] | None = None,
         secrets: dict[str, str] | None = None,
         timeout_minutes: int = 30,
+        start_time: float | None = None,
     ) -> tuple[str, list[dict]]:
         """
         Run rollouts with SSE streaming via the API streaming endpoint.
@@ -95,38 +117,9 @@ class RolloutClient:
 
         Shows live status table with spinner, prints conversations as they stream.
         """
-        # Build payload for Next.js API
-        payload = {
-            "samples": samples,
-            "model": self.model,
-            "max_tokens": self.max_tokens,
-            "temperature": self.temperature,
-            "max_turns": self.max_turns,
-            "termination_policy": self.termination_policy,
-            "rewards_py_code": rewards_py_code,
-            "tools_py_code": tools_py_code,
-            "requirements_txt": requirements_txt,
-            "secrets": secrets,
-        }
-
-        if self.mcp_url:
-            payload["mcp_url"] = self.mcp_url
-
-        # Get streaming URL and payload from Next.js API
-        resp = await self.client.post(
-            f"{self.api_base}/api/rnow/rollout",
-            json=payload,
-            headers=self.auth_headers,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-
-        if "error" in data:
-            raise Exception(f"API error: {data.get('error')}")
-
-        rollout_id = data["rollout_id"]
-        streaming_url = data["streaming_url"]
-        streaming_payload = data["payload"]
+        # Use provided start_time (from command start) or fall back to now
+        if start_time is None:
+            start_time = time.time()
 
         # Track state
         num_samples = len(samples)
@@ -134,8 +127,8 @@ class RolloutClient:
         status: dict[int, str] = {
             i: "queued" for i in range(num_samples)
         }  # queued, running, done, error
-        start_time = time.time()
         spinner_frame = 0
+        current_phase = "connecting"  # connecting, streaming
 
         # Create rollouts directory
         rollouts_dir = Path("rollouts")
@@ -158,6 +151,8 @@ class RolloutClient:
             elapsed = int(time.time() - start_time)
 
             text = Text()
+
+            # Show rollout statuses
             for i in range(num_samples):
                 s = status[i]
                 if s == "queued":
@@ -191,138 +186,182 @@ class RolloutClient:
 
             pending = sum(1 for s in status.values() if s in ("queued", "running"))
             if pending > 0:
-                text.append(
-                    f"\n{spinner} Running… {num_samples - pending}/{num_samples} complete ({elapsed}s)\n\n",
-                    style="white",
-                )
+                if current_phase == "connecting":
+                    text.append(
+                        f"\n{spinner} Connecting… ({elapsed}s)\n\n",
+                        style="white",
+                    )
+                else:
+                    text.append(
+                        f"\n{spinner} Running… {num_samples - pending}/{num_samples} complete ({elapsed}s)\n\n",
+                        style="white",
+                    )
             else:
                 text.append(f"\n✓ Complete ({elapsed}s)\n\n", style="green")
 
             return text
 
-        try:
-            async with (
-                httpx.AsyncClient(timeout=None) as sse_client,
-                sse_client.stream(
-                    "POST",
-                    streaming_url,
-                    json=streaming_payload,
-                    headers={"Accept": "text/event-stream"},
-                ) as response,
-            ):
-                response.raise_for_status()
-                buffer = ""
-                done_streaming = False
+        done_streaming = False
+        rollout_id = ""
 
-                with Live(render_status(), console=console, refresh_per_second=10) as live:
-                    # Background task to update spinner and timer
-                    async def update_display():
-                        while not done_streaming:
-                            live.update(render_status())
-                            await asyncio.sleep(0.1)
+        # Start the Live display immediately
+        with Live(render_status(), console=console, refresh_per_second=10) as live:
+            # Background task to update spinner and timer
+            async def update_display():
+                while not done_streaming:
+                    live.update(render_status())
+                    await asyncio.sleep(0.1)
 
-                    update_task = asyncio.create_task(update_display())
+            update_task = asyncio.create_task(update_display())
 
-                    try:
-                        async for chunk in response.aiter_text():
-                            if _shutdown_requested:
-                                raise asyncio.CancelledError()
+            try:
+                # Build payload for Next.js API
+                payload = {
+                    "samples": samples,
+                    "model": self.model,
+                    "max_tokens": self.max_tokens,
+                    "temperature": self.temperature,
+                    "max_turns": self.max_turns,
+                    "termination_policy": self.termination_policy,
+                    "rewards_py_code": rewards_py_code,
+                    "tools_py_code": tools_py_code,
+                    "requirements_txt": requirements_txt,
+                    "secrets": secrets,
+                }
 
-                            buffer += chunk
+                if self.mcp_url:
+                    payload["mcp_url"] = self.mcp_url
 
-                            while "\n\n" in buffer:
-                                event_str, buffer = buffer.split("\n\n", 1)
-                                event_data = self._parse_sse_event(event_str)
+                # Get streaming URL and payload from Next.js API
+                resp = await self.client.post(
+                    f"{self.api_base}/api/rnow/rollout",
+                    json=payload,
+                    headers=self.auth_headers,
+                )
+                resp.raise_for_status()
+                data = resp.json()
 
-                                if event_data is None:
-                                    continue
+                if "error" in data:
+                    raise Exception(f"API error: {data.get('error')}")
 
-                                event_type = event_data.get("event")
-                                data_json = event_data.get("data")
+                rollout_id = data["rollout_id"]
+                streaming_url = data["streaming_url"]
+                streaming_payload = data["payload"]
 
-                                if event_type == "rollout_start":
-                                    idx = data_json.get("index", 0)
-                                    status[idx] = "running"
+                # Now connect to the streaming endpoint
+                async with (
+                    httpx.AsyncClient(timeout=None) as sse_client,
+                    sse_client.stream(
+                        "POST",
+                        streaming_url,
+                        json=streaming_payload,
+                        headers={"Accept": "text/event-stream"},
+                    ) as response,
+                ):
+                    response.raise_for_status()
+                    current_phase = "streaming"
+                    buffer = ""
 
-                                    # Generate timestamped filename and create file
+                    async for chunk in response.aiter_text():
+                        if _shutdown_requested:
+                            raise asyncio.CancelledError()
+
+                        buffer += chunk
+
+                        while "\n\n" in buffer:
+                            event_str, buffer = buffer.split("\n\n", 1)
+                            event_data = self._parse_sse_event(event_str)
+
+                            if event_data is None:
+                                continue
+
+                            event_type = event_data.get("event")
+                            data_json = event_data.get("data")
+
+                            if event_type == "rollout_start":
+                                idx = data_json.get("index", 0)
+                                status[idx] = "running"
+
+                                # Generate timestamped filename and create file
+                                timestamp = time.strftime("%Y%m%d_%H%M%S")
+                                short_id = str(uuid.uuid4())[:8]
+                                result_id = f"{timestamp}_{short_id}"
+                                rollout_ids[idx] = result_id
+                                rollout_files[idx] = rollouts_dir / f"{result_id}.json"
+
+                                # Initialize conversation with initial messages
+                                initial_messages = data_json.get("messages", [])
+                                conversations[idx] = list(initial_messages)
+
+                                # Write initial state
+                                write_rollout_file(
+                                    idx,
+                                    {
+                                        "id": result_id,
+                                        "completed": False,
+                                        "conversation": conversations[idx],
+                                    },
+                                )
+
+                            elif event_type == "message":
+                                # Append message to conversation and update file
+                                idx = data_json.get("index", 0)
+                                msg = data_json.get("message", {})
+                                if idx in conversations and msg:
+                                    conversations[idx].append(msg)
+                                    write_rollout_file(
+                                        idx,
+                                        {
+                                            "id": rollout_ids.get(idx, ""),
+                                            "completed": False,
+                                            "conversation": conversations[idx],
+                                        },
+                                    )
+
+                            elif event_type == "result":
+                                idx = data_json.get("index", 0)
+
+                                # Use existing ID or generate new one
+                                result_id = rollout_ids.get(idx)
+                                if not result_id:
                                     timestamp = time.strftime("%Y%m%d_%H%M%S")
                                     short_id = str(uuid.uuid4())[:8]
                                     result_id = f"{timestamp}_{short_id}"
                                     rollout_ids[idx] = result_id
                                     rollout_files[idx] = rollouts_dir / f"{result_id}.json"
 
-                                    # Initialize conversation with initial messages
-                                    initial_messages = data_json.get("messages", [])
-                                    conversations[idx] = list(initial_messages)
+                                data_json["id"] = result_id
+                                # Add completed flag: true for success, "error" for failure
+                                data_json["completed"] = (
+                                    True if data_json.get("success") else "error"
+                                )
+                                results_by_index[idx] = data_json
 
-                                    # Write initial state
-                                    write_rollout_file(
-                                        idx,
-                                        {
-                                            "id": result_id,
-                                            "completed": False,
-                                            "conversation": conversations[idx],
-                                        },
-                                    )
+                                if data_json.get("success"):
+                                    status[idx] = "done"
+                                else:
+                                    status[idx] = "error"
 
-                                elif event_type == "message":
-                                    # Append message to conversation and update file
-                                    idx = data_json.get("index", 0)
-                                    msg = data_json.get("message", {})
-                                    if idx in conversations and msg:
-                                        conversations[idx].append(msg)
-                                        write_rollout_file(
-                                            idx,
-                                            {
-                                                "id": rollout_ids.get(idx, ""),
-                                                "completed": False,
-                                                "conversation": conversations[idx],
-                                            },
-                                        )
+                                # Write final result with rewards
+                                write_rollout_file(idx, data_json)
 
-                                elif event_type == "result":
-                                    idx = data_json.get("index", 0)
+                            elif event_type == "complete":
+                                billing = data_json.get("billing", {})
+                                tokens = billing.get("prompt_tokens", 0) + billing.get(
+                                    "completion_tokens", 0
+                                )
+                                self.total_charged_dollars += tokens * 0.000001
 
-                                    # Use existing ID or generate new one
-                                    result_id = rollout_ids.get(idx)
-                                    if not result_id:
-                                        timestamp = time.strftime("%Y%m%d_%H%M%S")
-                                        short_id = str(uuid.uuid4())[:8]
-                                        result_id = f"{timestamp}_{short_id}"
-                                        rollout_ids[idx] = result_id
-                                        rollout_files[idx] = rollouts_dir / f"{result_id}.json"
+            except httpx.RemoteProtocolError as e:
+                console.print(f"[yellow]Connection closed: {e}[/yellow]")
 
-                                    data_json["id"] = result_id
-                                    # Add completed flag: true for success, "error" for failure
-                                    data_json["completed"] = (
-                                        True if data_json.get("success") else "error"
-                                    )
-                                    results_by_index[idx] = data_json
-
-                                    if data_json.get("success"):
-                                        status[idx] = "done"
-                                    else:
-                                        status[idx] = "error"
-
-                                    # Write final result with rewards
-                                    write_rollout_file(idx, data_json)
-
-                                elif event_type == "complete":
-                                    billing = data_json.get("billing", {})
-                                    tokens = billing.get("prompt_tokens", 0) + billing.get(
-                                        "completion_tokens", 0
-                                    )
-                                    self.total_charged_dollars += tokens * 0.000001
-                    finally:
-                        done_streaming = True
-                        update_task.cancel()
-                        with contextlib.suppress(asyncio.CancelledError):
-                            await update_task
-                        # Final update
-                        live.update(render_status())
-
-        except httpx.RemoteProtocolError as e:
-            console.print(f"[yellow]Connection closed: {e}[/yellow]")
+            finally:
+                done_streaming = True
+                update_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await update_task
+                # Final update
+                live.update(render_status())
 
         return rollout_id, list(results_by_index.values())
 
@@ -369,7 +408,14 @@ class RolloutClient:
 @click.option(
     "--model",
     default=None,
-    help="Override model name for sampling (otherwise uses config.model.path)",
+    help="Model for sampling. Use OpenAI models (gpt-5-nano, gpt-5-mini, gpt-5.2, gpt-5-pro) "
+    "or a finetuned model ID.",
+)
+@click.option(
+    "--max-tokens",
+    default=None,
+    type=int,
+    help="Override max tokens for generation (otherwise uses config.rollout.max_tokens)",
 )
 @click.option(
     "--api-url",
@@ -398,6 +444,7 @@ def test(
     project_dir,
     num_rollouts,
     model,
+    max_tokens,
     api_url,
     debug,
     entries,
@@ -411,15 +458,13 @@ def test(
     global _shutdown_requested
     _shutdown_requested = False
 
+    # Start timing immediately
+    start_time = time.time()
+
     resolved_api_url = api_url or ctx.obj.get("api_url", "").replace("/api", "") or DEFAULT_API_URL
 
-    # Check for OpenAI API key
+    # Get OpenAI API key (may not be needed for tinker models)
     openai_api_key = os.environ.get("OPENAI_API_KEY")
-    if not openai_api_key:
-        raise click.ClickException(
-            "OPENAI_API_KEY environment variable is required.\n"
-            "Set it with: export OPENAI_API_KEY=sk-..."
-        )
 
     async def run_with_cancellation():
         """Run test with proper cancellation support."""
@@ -441,10 +486,12 @@ def test(
                 project_dir=project_dir,
                 num_rollouts=num_rollouts,
                 model_override=model,
+                max_tokens_override=max_tokens,
                 api_url=resolved_api_url,
                 debug=debug,
                 openai_api_key=openai_api_key,
                 entries=entries,
+                start_time=start_time,
             )
         except asyncio.CancelledError:
             click.echo(click.style("Aborted.", fg="yellow"))
@@ -618,7 +665,7 @@ def _display_results(
         click.echo()
         click.echo(f"Mean reward: {click.style(f'{mean_reward:.3f}', fg=TEAL_RGB)}")
         if rollout_id:
-            click.echo(f"Rollout ID: {click.style(rollout_id, fg=TEAL_RGB)}")
+            click.echo(f"Run Id: {click.style(rollout_id, dim=True)}")
 
     return failed_count
 
@@ -627,11 +674,16 @@ async def _test_async(
     project_dir: Path,
     num_rollouts: int,
     model_override: str | None,
+    max_tokens_override: int | None,
     api_url: str,
     debug: bool = False,
     openai_api_key: str | None = None,
     entries: tuple[int, ...] = (),
+    start_time: float | None = None,
 ):
+    # Start timing from command invocation
+    if start_time is None:
+        start_time = time.time()
     project_dir = Path(project_dir)
 
     config_path = project_dir / "config.yml"
@@ -733,16 +785,46 @@ async def _test_async(
     # Model selection: --model flag overrides default (gpt-5-nano)
     model_name = model_override if model_override else "gpt-5-nano"
 
-    # Get rollout settings from config
-    max_tokens = config.rollout.max_tokens if config.rollout else 2048
+    # Get rollout settings from config (--max-tokens overrides config)
+    max_tokens = (
+        max_tokens_override
+        if max_tokens_override
+        else (config.rollout.max_tokens if config.rollout else 2048)
+    )
     max_turns = config.rollout.max_turns if config.rollout else 1
     termination_policy = config.rollout.termination_policy if config.rollout else "last_tool"
     mcp_url = config.rollout.mcp_url if config.rollout else None
 
+    # Detect model type
+    use_gpu = is_gpu_model(model_name)
+    is_model_id = _looks_like_model_id(model_name)
+
+    # Check for OpenAI API key (required for OpenAI models)
+    if not use_gpu and not openai_api_key:
+        click.echo()
+        click.echo(click.style("  Missing API Key", fg="red", bold=True))
+        click.echo()
+        click.echo(
+            f"  {click.style('OPENAI_API_KEY', fg=TEAL_RGB)} environment variable is required."
+        )
+        click.echo()
+        click.echo("  Set it in your " + click.style(".env", fg=TEAL_RGB) + " file:")
+        click.echo(click.style("    OPENAI_API_KEY=sk-...", dim=True))
+        click.echo()
+        raise SystemExit(1)
+
     # Display model info
-    click.echo(
-        f"Model: {click.style(model_name, fg=TEAL_RGB)} {click.style('(smoke test uses OpenAI for latency)', dim=True)}"
-    )
+    if use_gpu:
+        if is_model_id:
+            click.echo(f"Model Id: {click.style(model_name, dim=True)}")
+        else:
+            click.echo(
+                f"Model: {click.style(model_name, fg=TEAL_RGB)} {click.style('(GPU)', dim=True)}"
+            )
+    else:
+        click.echo(
+            f"Model: {click.style(model_name, fg=TEAL_RGB)} {click.style('(OpenAI API)', dim=True)}"
+        )
     click.echo()
 
     try:
@@ -798,6 +880,7 @@ async def _test_async(
                 dockerfiles=dockerfiles if dockerfiles else None,
                 secrets=project_secrets if project_secrets else None,
                 timeout_minutes=60,
+                start_time=start_time,
             )
         except asyncio.CancelledError:
             batch_results = []
@@ -817,8 +900,7 @@ async def _test_async(
         raise
 
     # Show completion
-    click.echo()
-    click.echo(click.style("Test complete", fg=TEAL_RGB, bold=True))
+    click.echo(click.style("Rollout Complete", fg=TEAL_RGB, bold=True))
 
     # Fail if any rollouts failed
     if failed_count > 0:
