@@ -2288,12 +2288,16 @@ def run(
             target = "dataset" if file_name == "train.jsonl" else "project"
             files_to_upload.append((file_name, path, target))
 
-    # Optional files
+    # Optional files (rewards.py is optional for DISTILL but still uploaded if present)
     optional_files = {
+        "rewards.py": dir / "rewards.py",
         "tools.py": dir / "tools.py",
         "requirements.txt": dir / "requirements.txt",
     }
     for file_name, path in optional_files.items():
+        # Skip if already in required_files (e.g., rewards.py for RL mode)
+        if file_name in required_files:
+            continue
         if path.exists():
             files_to_upload.append((file_name, path, "project"))
 
