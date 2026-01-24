@@ -22,7 +22,6 @@ rollout:
   max_tokens: 4096
   termination_policy: last_tool
   mcp_url: "https://mcp.tavily.com/mcp/?tavilyApiKey=YOUR_TAVILY_API_KEY"
-  max_context_window: 32768
 trainer:
   num_epochs: 4
   learning_rate: 0.0001

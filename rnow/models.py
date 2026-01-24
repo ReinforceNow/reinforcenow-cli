@@ -403,6 +403,11 @@ class RolloutConfig(BaseModel):
         gt=0,
         description="Timeout in seconds for tool calls. Browser automation may need longer timeouts (default: 60s).",
     )
+    max_tool_response: int | None = Field(
+        default=None,
+        gt=0,
+        description="Maximum tokens for tool responses. Responses longer than this are truncated. Default None (no limit, only context-based truncation).",
+    )
     max_context_window: int = Field(
         default=32768,
         gt=0,

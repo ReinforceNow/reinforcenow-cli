@@ -1,0 +1,18 @@
+# Browserbase MCP Server with Stagehand
+FROM node:20-slim
+WORKDIR /app
+RUN apt-get update && apt-get install -y curl jq && rm -rf /var/lib/apt/lists/*
+RUN npm install -g @browserbasehq/mcp-server-browserbase
+EXPOSE 8931
+
+# Create startup script to pass environment variables
+# Note: Stagehand MCP manages Browserbase sessions internally
+RUN echo '#!/bin/bash' > /start.sh && \
+    echo 'exec npx @browserbasehq/mcp-server-browserbase \' >> /start.sh && \
+    echo '  --port 8931 \' >> /start.sh && \
+    echo '  --host 0.0.0.0 \' >> /start.sh && \
+    echo '  --modelName openai/gpt-5 \' >> /start.sh && \
+    echo '  --modelApiKey "$OPENAI_API_KEY"' >> /start.sh && \
+    chmod +x /start.sh
+
+ENTRYPOINT ["/start.sh"]

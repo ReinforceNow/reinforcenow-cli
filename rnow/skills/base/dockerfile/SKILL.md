@@ -118,6 +118,40 @@ docker run --rm test:latest python -c "from tools import browse; print(browse('h
 
 **The most common mistake:** Testing that the container starts but not testing the actual tool function with real inputs.
 
+## MCP Server Host Restrictions
+
+**CRITICAL:** Many MCP servers (especially Playwright MCP) restrict connections to localhost by default, even when bound to `0.0.0.0`. When Modal's tunnel connects, the server sees a non-localhost hostname and returns **403 Forbidden**.
+
+**Fix:** Add `--allowed-hosts '*'` (or `--allowed-hosts "*"` in shell scripts) to allow external connections.
+
+### Example: Playwright MCP with Browserbase CDP
+
+```dockerfile
+FROM node:20-slim
+WORKDIR /app
+RUN apt-get update && apt-get install -y curl jq && rm -rf /var/lib/apt/lists/*
+RUN npm install -g @playwright/mcp
+EXPOSE 8931
+
+# Creates Browserbase session, passes CDP endpoint to Playwright MCP
+RUN echo '#!/bin/bash' > /start.sh && \
+    echo 'set -e' >> /start.sh && \
+    echo 'RESPONSE=$(curl -s -X POST "https://api.browserbase.com/v1/sessions" -H "X-BB-API-Key: $BROWSERBASE_API_KEY" -H "Content-Type: application/json" -d "{\"projectId\": \"$BROWSERBASE_PROJECT_ID\"}")' >> /start.sh && \
+    echo 'SESSION_ID=$(echo "$RESPONSE" | jq -r ".id")' >> /start.sh && \
+    echo 'CDP="wss://connect.browserbase.com?apiKey=$BROWSERBASE_API_KEY&sessionId=$SESSION_ID"' >> /start.sh && \
+    echo 'cleanup() { curl -s -X POST "https://api.browserbase.com/v1/sessions/$SESSION_ID" -H "X-BB-API-Key: $BROWSERBASE_API_KEY" -H "Content-Type: application/json" -d "{\"status\":\"REQUEST_RELEASE\"}" || true; }' >> /start.sh && \
+    echo 'trap cleanup EXIT SIGTERM SIGINT' >> /start.sh && \
+    echo 'npx @playwright/mcp --port 8931 --host 0.0.0.0 --allowed-hosts "*" --cdp-endpoint "$CDP" &' >> /start.sh && \
+    echo 'sleep 3' >> /start.sh && \
+    echo 'exec "$@"' >> /start.sh && \
+    chmod +x /start.sh
+
+ENTRYPOINT ["/start.sh"]
+```
+
+**Without `--allowed-hosts "*"`:** Modal tunnel connection gets 403 Forbidden
+**With `--allowed-hosts "*"`:** Connections from any host are accepted
+
 ## Common Issues
 
 | Issue | Fix |
@@ -127,3 +161,4 @@ docker run --rm test:latest python -c "from tools import browse; print(browse('h
 | `Heredoc not supported` | Use `RUN echo '...' > file` |
 | `Platform mismatch` | Build with `--platform linux/amd64` |
 | `Server not responding` | Check `supervisord.conf` or similar for actual startup commands |
+| `403 Forbidden` | Add `--allowed-hosts '*'` to MCP server command (localhost restriction) |

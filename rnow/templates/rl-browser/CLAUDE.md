@@ -9,7 +9,7 @@ This template trains a model to:
 2. Browse web pages to find information
 3. Extract and provide accurate answers
 
-The agent learns through RL rewards - getting rewarded for correct answers and for using browser tools.
+The agent learns through RL rewards - getting rewarded for correct answers.
 
 ## Playwright MCP
 
@@ -35,7 +35,7 @@ rnow run
 |------|---------|
 | `config.yml` | Training configuration with `mcp_url` |
 | `train.jsonl` | SimpleQA questions with docker field |
-| `rewards.py` | accuracy + used_browse rewards |
+| `rewards.py` | used_browser (precondition) + accuracy |
 | `requirements.txt` | Sidecar dependencies (jellyfish) |
 | `Dockerfile.playwright` | Playwright MCP server image |
 
@@ -50,19 +50,13 @@ The Playwright MCP server provides these tools:
 
 ## Rewards
 
+### used_browser (precondition)
+Gate reward - must use at least one browser tool to get any reward.
+
 ### accuracy (0.0 or 1.0)
 Checks if "Final Answer: <answer>" matches expected answer using Jaro-Winkler similarity (>90% required).
 
-### used_browse (0.0 or 0.2)
-Small reward for using browser tools - encourages research over guessing.
-
 ## train.jsonl Format
-
-Each entry includes:
-- `messages`: System prompt + user question
-- `rewards`: List of reward function names
-- `docker`: Docker image for Playwright MCP (`local/playwright`)
-- `metadata`: Expected answer for reward computation
 
 ```json
 {
@@ -70,7 +64,7 @@ Each entry includes:
     {"role": "system", "content": "You are a research assistant..."},
     {"role": "user", "content": "Who received the IEEE Frank Rosenblatt Award in 2010?"}
   ],
-  "rewards": ["accuracy", "used_browse"],
+  "rewards": ["used_browser", "accuracy"],
   "docker": "local/playwright",
   "metadata": {"expected_answer": "Michio Sugeno"}
 }
@@ -78,24 +72,15 @@ Each entry includes:
 
 ## Converting SimpleQA Dataset
 
-To use the full SimpleQA dataset:
-
 ```python
 from datasets import load_dataset
 import json
 
 ds = load_dataset("openai/SimpleQA", split="train")
 
-system_prompt = """You are a research assistant that answers factual questions by browsing the web.
+system_prompt = """You are a research assistant. Answer questions by finding proof on the web using browser tools.
 
-You have browser tools to navigate and interact with web pages. Use them to find information.
-
-Strategy:
-1. Navigate to a search engine or relevant website
-2. Browse pages to find the answer
-3. Extract the answer from the page content
-
-After your reasoning, provide your final answer in this exact format:
+After finding evidence, provide your answer in this format:
 Final Answer: <your answer>"""
 
 with open("train.jsonl", "w") as f:
@@ -105,7 +90,7 @@ with open("train.jsonl", "w") as f:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": row["problem"]},
             ],
-            "rewards": ["accuracy", "used_browse"],
+            "rewards": ["used_browser", "accuracy"],
             "docker": "local/playwright",
             "metadata": {"expected_answer": row["answer"]},
         }
@@ -118,9 +103,8 @@ with open("train.jsonl", "w") as f:
 dataset_type: rl  # RL training with rewards
 
 rollout:
-  max_turns: 4           # Allow multiple browse iterations
+  max_turns: 25          # Allow multiple browse iterations
   max_tokens: 4096       # Token limit per response
-  max_context_window: 32768  # Context window in tokens
   tool_timeout: 120      # Seconds to wait for browser tools
   mcp_url: localhost:8931  # Playwright MCP server port
 

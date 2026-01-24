@@ -1,18 +1,18 @@
 project_id: ""
-project_name: "RL Browser Agent"
+project_name: "Browserbase Playwright Agent"
 dataset_id: ""
-dataset_name: "simpleqa-browser"
+dataset_name: "browser-tasks"
 dataset_type: rl
 organization_id: ""
 data:
   train_file: train.jsonl
-  batch_size: 8
-  group_size: 4
+  batch_size: 16
+  group_size: 8
 model:
   path: Qwen/Qwen3-8B
   qlora_rank: 32
-  name: "Browser QA Agent"
-  description: "Multi-turn RL agent trained to answer factual questions using web browsing"
+  name: "Browserbase Playwright Agent"
+  description: "Multi-turn RL agent trained with Playwright MCP + Browserbase"
 algorithm:
   loss_fn: ppo
   adv_estimator: grpo
@@ -23,6 +23,7 @@ rollout:
   termination_policy: last_tool
   tool_timeout: 120
   mcp_url: localhost:8931
+  max_tool_response: 8000  # Limit browser_snapshot size
 trainer:
   num_epochs: 3
   learning_rate: 0.0001

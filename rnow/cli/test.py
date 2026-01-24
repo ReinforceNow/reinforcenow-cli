@@ -167,17 +167,29 @@ class RolloutClient:
                     text.append("\n")
                 elif s == "done":
                     result = results_by_index.get(i, {})
-                    reward = result.get("total_reward", 0.0)
+                    reward = result.get("total_reward")
                     breakdown = result.get("rewards", {})
                     rid = rollout_ids.get(i, "")
                     text.append(f"Rollout {i + 1}: ", style=f"bold {TEAL}")
-                    text.append(f"✓ reward={reward:.3f}", style="green")
-                    if breakdown:
-                        bd = ", ".join(f"{k}={v:.3f}" for k, v in breakdown.items())
-                        text.append(f"  [{bd}]", style="green")
+                    text.append("✓", style="green")
+                    # Show reward if available (RL mode)
+                    if reward is not None:
+                        text.append(f" reward={reward:.3f}", style="green")
+                        if breakdown:
+                            # Handle both float values and string values (like "timeout" or "error")
+                            bd = ", ".join(
+                                f"{k}={v:.3f}" if isinstance(v, int | float) else f"{k}={v}"
+                                for k, v in breakdown.items()
+                            )
+                            text.append(f"  [{bd}]", style="green")
                     if rid:
                         text.append(f"  written to rollouts/{rid}.json", style="dim")
                     text.append("\n")
+                    # Show tool errors if any (helps debug API key issues, etc.)
+                    tool_errors = result.get("tool_errors", [])
+                    if tool_errors:
+                        for err in tool_errors:
+                            text.append(f"    ⚠ {err}\n", style="yellow")
                 elif s == "error":
                     result = results_by_index.get(i, {})
                     error = result.get("error", "Unknown")
@@ -409,7 +421,7 @@ class RolloutClient:
 @click.option(
     "--model",
     default=None,
-    help="Model for sampling. Use OpenAI models (gpt-5-nano, gpt-5-mini, gpt-5.2, gpt-5-pro) "
+    help="Model for sampling. Use gpt-5 models (gpt-5-nano, gpt-5-mini, gpt-5.2, gpt-5-pro) "
     "or a finetuned model ID.",
 )
 @click.option(
@@ -454,7 +466,7 @@ def test(
 
     Runs rollouts via the ReinforceNow API. Requires OPENAI_API_KEY.
 
-    Only works with RL projects (dataset_type: rl).
+    Works with RL and SFT projects. For SFT/distillation, rewards.py is optional.
     """
     global _shutdown_requested
     _shutdown_requested = False
@@ -732,20 +744,15 @@ async def _test_async(
                 raise SystemExit(1)
         raise click.ClickException(f"Failed to parse config.yml: {e}")
 
-    if config.dataset_type.value not in ("rl", "distill"):
-        raise click.ClickException(
-            f"rnow test only supports RL and distillation projects. "
-            f"Found: {config.dataset_type.value}"
-        )
-
     is_distill = config.dataset_type.value == "distill"
+    is_sft = config.dataset_type.value == "sft"
 
     rewards_path = project_dir / "rewards.py"
     tools_path = project_dir / "tools.py"
     train_path = project_dir / "train.jsonl"
 
-    # rewards.py is required for RL, optional for distillation (which uses teacher KL penalty)
-    if not rewards_path.exists() and not is_distill:
+    # rewards.py is required for RL, optional for distillation/SFT
+    if not rewards_path.exists() and not is_distill and not is_sft:
         raise click.ClickException("rewards.py not found in project directory")
     if not train_path.exists():
         raise click.ClickException("train.jsonl not found in project directory")
@@ -769,7 +776,8 @@ async def _test_async(
         dockerfiles[dockerfile_path.name] = dockerfile_path.read_text()
         click.echo(f"  Found {dockerfile_path.name}")
 
-    # Read .env file for project secrets
+    # Read secrets from .env file and environment variables
+    # Environment variables override .env values
     project_secrets: dict[str, str] = {}
     env_path = project_dir / ".env"
     if env_path.exists():
@@ -780,14 +788,52 @@ async def _test_async(
                 # Remove quotes if present
                 value = value.strip().strip("'\"")
                 project_secrets[key.strip()] = value
-        if project_secrets:
-            click.echo(f"  Loaded secrets: {list(project_secrets.keys())}")
+
+    # Also check common secret env vars from shell (override .env if set)
+    secret_patterns = [
+        "API_KEY",
+        "SECRET",
+        "TOKEN",
+        "PROJECT_ID",
+        "BROWSERBASE",
+        "OPENAI",
+        "GEMINI",
+        "HF_",
+    ]
+    for key, value in os.environ.items():
+        if any(pattern in key for pattern in secret_patterns):
+            project_secrets[key] = value
+
+    if project_secrets:
+        click.echo(f"  Loaded secrets: {list(project_secrets.keys())}")
 
     if not samples:
         raise click.ClickException("train.jsonl is empty")
 
     # Model selection: --model flag overrides default (gpt-5-nano)
     model_name = model_override if model_override else "gpt-5-nano"
+
+    # Validate model - only allow gpt-5 models or GPU models
+    valid_gpt5_models = {"gpt-5-nano", "gpt-5-mini", "gpt-5.2", "gpt-5-pro"}
+    is_gpt5_model = model_name in valid_gpt5_models or model_name.startswith("gpt-5")
+    is_gpu = is_gpu_model(model_name)
+    is_model_id_check = _looks_like_model_id(model_name)
+
+    if not is_gpt5_model and not is_gpu and not is_model_id_check:
+        click.echo()
+        click.echo(click.style("  Unsupported Model", fg="red", bold=True))
+        click.echo()
+        click.echo(f"  Model '{model_name}' is not supported for rnow test.")
+        click.echo()
+        click.echo("  Supported models:")
+        click.echo(click.style("    • gpt-5-nano (fastest, recommended for testing)", dim=True))
+        click.echo(click.style("    • gpt-5-mini", dim=True))
+        click.echo(click.style("    • gpt-5.2", dim=True))
+        click.echo(click.style("    • gpt-5-pro (highest quality)", dim=True))
+        click.echo(click.style("    • GPU models (Qwen/Qwen3-8B, etc.)", dim=True))
+        click.echo(click.style("    • Finetuned model IDs", dim=True))
+        click.echo()
+        raise SystemExit(1)
 
     # Get rollout settings from config (--max-tokens overrides config)
     max_tokens = (
@@ -839,11 +885,11 @@ async def _test_async(
             f"Model: {click.style(model_name, fg=TEAL_RGB)} {click.style('(OpenAI API)', dim=True)}"
         )
 
-    # Note for distillation mode
-    if is_distill:
+    # Note for distillation/SFT mode
+    if is_distill or is_sft:
         click.echo(
             click.style("Note: ", dim=True)
-            + "Distillation test only runs rollouts (no teacher KL penalty or rewards)"
+            + "SFT/Distillation test only runs rollouts (no rewards)"
         )
     click.echo()
 

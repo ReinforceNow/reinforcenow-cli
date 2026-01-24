@@ -3201,7 +3201,7 @@ wheels = [
 
 [[package]]
 name = "rnow"
-version = "0.4.11"
+version = "0.4.12"
 source = { editable = "." }
 dependencies = [
     { name = "boto3" },

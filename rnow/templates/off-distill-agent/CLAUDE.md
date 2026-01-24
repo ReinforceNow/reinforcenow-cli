@@ -1,102 +1,66 @@
-# Off-Policy Distillation Agent (MedBrowseComp)
+# Off-Policy Distillation
 
-Train a model on teacher-generated examples using the MedBrowseComp medical QA dataset.
+Train a model on teacher-generated completions via SFT.
 
-## IMPORTANT: Setup with uv
-
-This template requires **Python 3.11+** and **crawl4ai** for web browsing. Use `uv` to manage dependencies.
-
-**Before running any scripts, execute these setup commands:**
+## Quick Start (HuggingFace Dataset)
 
 ```bash
-# 1. Create venv with Python 3.11+ using uv
-uv venv --python 3.11
+# 1. Convert HuggingFace dataset to train.jsonl
+python convert_hf_dataset.py --max-samples 1000
 
-# 2. Activate the venv
-source .venv/bin/activate
-
-# 3. Install all dependencies
-uv pip install datasets httpx tqdm crawl4ai nest_asyncio
-
-# 4. Setup crawl4ai browser (required once)
-crawl4ai-setup
-```
-
-## Quick Start
-
-After setup is complete:
-
-```bash
-# 1. Set API key (or add to .env file)
-export OPENROUTER_API_KEY="sk-or-v1-your-key-here"
-
-# 2. Download full MedBrowseComp dataset (605 samples)
-python convert_dataset.py
-
-# 3. Generate teacher completions with real web browsing
-python generate_distillation_data.py prompts.jsonl \
-  --model openai/gpt-4o-mini \
-  --tools tools.py \
-  --output train.jsonl \
-  --concurrency 5
-
-# 4. Run training
+# 2. Train (SFT)
 rnow run
 ```
 
-## Dataset Info
-
-MedBrowseComp has 605 training samples across 5 task types:
-- **Ingredient** - Find drug ingredients from clinical trials
-- **Applicant_Full_Name** - Identify pharmaceutical companies
-- **Patent_Expire_Date** - Find patent expiration dates
-- **Exclusivity_Date** - Find FDA exclusivity dates
-- **Open_on_Approval** - Get stock prices on approval dates
-
-## The `browse` Tool
-
-This template uses **Crawl4AI** to provide a real web browsing tool:
-
-```python
-@tool
-def browse(url: str) -> str:
-    """Browse a URL and return its content as markdown."""
-```
-
-The teacher model calls `browse()` with URLs like:
-- `https://clinicaltrials.gov/study/NCT01234567`
-- `https://www.accessdata.fda.gov/scripts/cder/daf/`
-
-And gets back **real page content** as LLM-friendly markdown.
-
-## Options
+## Quick Start (Generate with rnow test)
 
 ```bash
-# With real web browsing (recommended)
-python generate_distillation_data.py prompts.jsonl \
-  --tools tools.py \
-  --model openai/gpt-4o \
-  --output train.jsonl \
-  --concurrency 5
+# 1. Create prompts in train.jsonl (no assistant messages)
+# 2. Run teacher rollouts
+rnow test -n 100 --model gpt-5.2
 
-# Without tools (teacher answers from training knowledge only)
-python generate_distillation_data.py prompts.jsonl \
-  --tools none \
-  --model openai/gpt-4o \
-  --output train.jsonl
+# 3. Convert rollouts to train.jsonl
+python convert_rollouts.py
 
-# With custom system prompt
-python generate_distillation_data.py prompts.jsonl \
-  --tools tools.py \
-  --system "You are a medical research assistant. Use the browse tool to find accurate information." \
-  --output train.jsonl
+# 4. Train (SFT)
+rnow run
 ```
 
 ## Files
 
 | File | Purpose |
 |------|---------|
-| `convert_dataset.py` | Download MedBrowseComp → prompts.jsonl |
-| `generate_distillation_data.py` | Generate teacher completions |
-| `tools.py` | Crawl4AI `browse` tool for real web content |
+| `convert_hf_dataset.py` | Convert HuggingFace dataset to train.jsonl |
+| `convert_rollouts.py` | Convert rnow test rollouts to train.jsonl |
 | `config.yml` | SFT training config |
+| `train.jsonl` | Training data |
+
+## Using HuggingFace Datasets
+
+The default uses [zenml/cuad-deepseek](https://huggingface.co/datasets/zenml/cuad-deepseek) - legal contract classification with DeepSeek-R1 reasoning traces.
+
+```bash
+# Different sample sizes
+python convert_hf_dataset.py --max-samples 100    # Quick test
+python convert_hf_dataset.py --max-samples 5000   # Medium
+python convert_hf_dataset.py --max-samples 26000  # Full dataset
+```
+
+## Using rnow test
+
+For custom prompts without existing teacher completions:
+
+```bash
+# Create train.jsonl with prompts only
+{"messages": [{"role": "user", "content": "..."}], "metadata": {...}}
+
+# Generate teacher completions
+rnow test -n 50 --model gpt-5.2
+rnow test -n 50 --model gpt-5-pro  # Higher quality
+
+# Convert and train
+python convert_rollouts.py
+rnow run
+```
+
+Supported models for `rnow test`: gpt-5-nano, gpt-5-mini, gpt-5.2, gpt-5-pro
