@@ -1131,6 +1131,7 @@ def orgs(ctx, org_id: str | None):
             "rl-single",
             "rl-nextjs",
             "rl-tools",
+            "rl-browser",
             "mcp-tavily",
             "deepseek-aha",
             "finqa",
@@ -1180,6 +1181,7 @@ def init(template: str, name: str, dataset: str, yes: bool):
         "first-rl": "my-project",
         "rl-single": "rl-project",
         "rl-tools": "rl-tools-project",
+        "rl-browser": "rl-browser-project",
         "rl-nextjs": "nextjs-project",
         "mcp-tavily": "mcp-tavily-project",
         "sft": "sft-project",
@@ -2090,35 +2092,47 @@ def run(
         # Fetch MCP tool schemas (with progress indicator)
         mcp_urls = config.rollout.mcp_url if config.rollout else None
         if mcp_urls:
-            # Check if fastmcp is installed
-            try:
-                import fastmcp  # noqa: F401
-            except ImportError:
-                click.echo()
-                click.echo(click.style("✗ MCP support requires fastmcp", fg="red", bold=True))
-                click.echo()
-                click.echo("  Your config.yml uses mcp_url, but fastmcp is not installed")
-                click.echo("  in the same Python environment as rnow.")
-                click.echo()
-                click.echo(f"  rnow is running from: {click.style(sys.executable, dim=True)}")
-                click.echo()
-                click.echo("  Install it with:")
-                click.echo(click.style("    uv pip install fastmcp", fg=TEAL_RGB))
-                click.echo()
-                raise click.ClickException("Missing dependency: fastmcp")
-
-            click.echo(click.style("Fetching MCP tools...", dim=True), nl=False)
-            mcp_tools, mcp_error = fetch_mcp_tool_schemas(mcp_urls, timeout=15.0)
-            if mcp_error:
-                click.echo(
-                    "\r" + click.style("MCP: ", fg="red") + f"failed ({mcp_error})" + " " * 20
-                )
-                raise click.ClickException(f"Failed to fetch MCP tools: {mcp_error}")
-
-            all_tools.extend(mcp_tools)
-            click.echo(
-                "\r" + click.style("MCP: ", fg=TEAL_RGB) + f"{len(mcp_tools)} tools" + " " * 20
+            # Check if MCP URL is localhost (runs inside Docker container, can't validate locally)
+            is_localhost_mcp = mcp_urls.startswith("localhost:") or mcp_urls.startswith(
+                "127.0.0.1:"
             )
+
+            if is_localhost_mcp:
+                # Skip validation - MCP server runs inside Docker container in cloud
+                click.echo(
+                    click.style("MCP: ", fg=TEAL_RGB)
+                    + f"in-sandbox ({mcp_urls}) - tools provided at runtime"
+                )
+            else:
+                # External MCP URL - validate locally
+                try:
+                    import fastmcp  # noqa: F401
+                except ImportError:
+                    click.echo()
+                    click.echo(click.style("✗ MCP support requires fastmcp", fg="red", bold=True))
+                    click.echo()
+                    click.echo("  Your config.yml uses mcp_url, but fastmcp is not installed")
+                    click.echo("  in the same Python environment as rnow.")
+                    click.echo()
+                    click.echo(f"  rnow is running from: {click.style(sys.executable, dim=True)}")
+                    click.echo()
+                    click.echo("  Install it with:")
+                    click.echo(click.style("    uv pip install fastmcp", fg=TEAL_RGB))
+                    click.echo()
+                    raise click.ClickException("Missing dependency: fastmcp")
+
+                click.echo(click.style("Fetching MCP tools...", dim=True), nl=False)
+                mcp_tools, mcp_error = fetch_mcp_tool_schemas(mcp_urls, timeout=15.0)
+                if mcp_error:
+                    click.echo(
+                        "\r" + click.style("MCP: ", fg="red") + f"failed ({mcp_error})" + " " * 20
+                    )
+                    raise click.ClickException(f"Failed to fetch MCP tools: {mcp_error}")
+
+                all_tools.extend(mcp_tools)
+                click.echo(
+                    "\r" + click.style("MCP: ", fg=TEAL_RGB) + f"{len(mcp_tools)} tools" + " " * 20
+                )
 
         # Count tokens with proper format (includes Harmony rendering for gpt-oss)
         total_prompt_tokens = get_max_prompt_tokens(train_jsonl_path, all_tools, model_path)

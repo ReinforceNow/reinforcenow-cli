@@ -1,0 +1,31 @@
+project_id: ""
+project_name: "RL Browser Agent"
+dataset_id: ""
+dataset_name: "simpleqa-browser"
+dataset_type: rl
+organization_id: ""
+data:
+  train_file: train.jsonl
+  batch_size: 8
+  group_size: 4
+model:
+  path: Qwen/Qwen3-8B
+  qlora_rank: 32
+  name: "Browser QA Agent"
+  description: "Multi-turn RL agent trained to answer questions using web browsing"
+algorithm:
+  loss_fn: ppo
+  adv_estimator: grpo
+  kl_penalty_coef: 0.01
+rollout:
+  max_turns: 4
+  max_tokens: 4096
+  termination_policy: last_tool
+  max_tool_response_chars: 8000
+  tool_timeout: 120
+  mcp_url: localhost:8931
+trainer:
+  num_epochs: 3
+  learning_rate: 0.0001
+  save_step: 50
+  eval_step: 50

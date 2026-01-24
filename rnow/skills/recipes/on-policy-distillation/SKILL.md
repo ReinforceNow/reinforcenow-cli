@@ -147,7 +147,7 @@ rollout:
 |-------|-------------|------------------------|
 | `dataset_type` | `rl` | `distill` |
 | `teacher:` | Not used | Required (teacher model config) |
-| `rewards` in train.jsonl | Required | Not used (KL penalty instead) |
+| `rewards` in train.jsonl | Required (training signal) | Optional (for tracking only) |
 | Agentic mode | Always if tools.py | Auto-detected from tools.py |
 
 ---
@@ -280,12 +280,19 @@ Use HuggingFace model IDs (case-sensitive):
 
 ### train.jsonl Format
 
-Same format as RL training, but `rewards` field is optional (KL penalty is the signal):
+Same format as RL training. The `rewards` field is **optional** - add it if you want to track task performance (rewards won't affect training, only the dashboard):
 
 ```json
 {"messages": [{"role": "user", "content": "What is 2+2?"}], "metadata": {"answer": "4"}}
-{"messages": [{"role": "user", "content": "Explain quantum computing"}]}
+{"messages": [{"role": "user", "content": "What is 2+2?"}], "rewards": ["accuracy"], "metadata": {"answer": "4"}}
 ```
+
+### Why Add Rewards for Tracking?
+
+Even though rewards don't affect training (teacher KL is the signal), adding them lets you:
+- Monitor task accuracy during training on the dashboard
+- See reward breakdown in traces
+- Compare distillation vs RL performance
 
 ### Agentic Datasets
 

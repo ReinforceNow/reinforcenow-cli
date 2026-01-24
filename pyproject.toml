@@ -25,6 +25,7 @@ dependencies = [
     "packaging>=21.0",
     "prompt_toolkit>=3.0.0",
     "rich>=13.0.0",  # Terminal formatting and live updates
+    "python-dotenv>=1.0.0",  # Load .env files
     # Tokenizers for accurate token counting
     "tokenizers>=0.15.0",
     "openai-harmony>=0.0.8",

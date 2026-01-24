@@ -227,6 +227,7 @@ class RolloutClient:
                     "tools_py_code": tools_py_code,
                     "requirements_txt": requirements_txt,
                     "secrets": secrets,
+                    "dockerfiles": dockerfiles,
                 }
 
                 if self.mcp_url:
@@ -460,6 +461,13 @@ def test(
 
     # Start timing immediately
     start_time = time.time()
+
+    # Load .env file into os.environ (supports both .env and export)
+    env_file = project_dir / ".env"
+    if env_file.exists():
+        from dotenv import load_dotenv
+
+        load_dotenv(env_file, override=False)  # Don't override existing env vars
 
     resolved_api_url = api_url or ctx.obj.get("api_url", "").replace("/api", "") or DEFAULT_API_URL
 
@@ -730,24 +738,20 @@ async def _test_async(
             f"Found: {config.dataset_type.value}"
         )
 
-    # Distillation testing requires teacher model - not yet supported locally
-    if config.dataset_type.value == "distill":
-        raise click.ClickException(
-            "Local testing for distillation is not yet supported. "
-            "Use 'rnow run' to start distillation training on the platform."
-        )
+    is_distill = config.dataset_type.value == "distill"
 
     rewards_path = project_dir / "rewards.py"
     tools_path = project_dir / "tools.py"
     train_path = project_dir / "train.jsonl"
 
-    if not rewards_path.exists():
+    # rewards.py is required for RL, optional for distillation (which uses teacher KL penalty)
+    if not rewards_path.exists() and not is_distill:
         raise click.ClickException("rewards.py not found in project directory")
     if not train_path.exists():
         raise click.ClickException("train.jsonl not found in project directory")
 
     # Read user code files to send to the API
-    rewards_py_code = rewards_path.read_text()
+    rewards_py_code = rewards_path.read_text() if rewards_path.exists() else None
     tools_py_code = tools_path.read_text() if tools_path.exists() else None
 
     # Read requirements.txt if exists
@@ -805,6 +809,15 @@ async def _test_async(
         click.echo(click.style("  Missing API Key", fg="red", bold=True))
         click.echo()
         click.echo(
+            click.style("  We default to OpenAI models for lower latency during testing.", dim=True)
+        )
+        click.echo(
+            click.style(
+                "  Use --model to specify a different model (e.g., --model Qwen/Qwen3-8B)", dim=True
+            )
+        )
+        click.echo()
+        click.echo(
             f"  {click.style('OPENAI_API_KEY', fg=TEAL_RGB)} environment variable is required."
         )
         click.echo()
@@ -824,6 +837,13 @@ async def _test_async(
     else:
         click.echo(
             f"Model: {click.style(model_name, fg=TEAL_RGB)} {click.style('(OpenAI API)', dim=True)}"
+        )
+
+    # Note for distillation mode
+    if is_distill:
+        click.echo(
+            click.style("Note: ", dim=True)
+            + "Distillation test only runs rollouts (no teacher KL penalty or rewards)"
         )
     click.echo()
 

@@ -23,11 +23,12 @@ teacher:
   path: Qwen/Qwen3-32B  # Teacher model (larger than student)
 
 rollout:
-  max_turns: 10  # Medical research may need multiple searches
+  max_turns: 4  # Medical research may need multiple searches
   max_tokens: 4096
   termination_policy: last_tool
   max_tool_response_chars: 8000
   tool_timeout: 120
+  mcp_url: localhost:8931  # Playwright MCP server in Docker
 
 algorithm:
   loss_fn: ppo

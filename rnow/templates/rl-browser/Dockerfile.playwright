@@ -1,0 +1,20 @@
+FROM mcp/playwright
+
+EXPOSE 8931
+
+# Modal sandboxes run "sleep infinity" and IGNORE Docker ENTRYPOINT/CMD.
+# This wrapper script starts the MCP server in background when ANY command runs.
+# When Modal runs: sleep infinity → this script starts MCP server, then runs sleep infinity
+
+USER root
+
+# Base image entrypoint: node cli.js --headless --browser chromium --no-sandbox
+# Add --port 8931 --host 0.0.0.0 to expose as HTTP/SSE server
+# Add --allowed-hosts '*' to allow any hostname (required for cloud tunnels)
+RUN echo '#!/bin/bash' > /start.sh && \
+    echo 'node cli.js --headless --browser chromium --no-sandbox --port 8931 --host 0.0.0.0 --allowed-hosts "*" &' >> /start.sh && \
+    echo 'sleep 5' >> /start.sh && \
+    echo 'exec "$@"' >> /start.sh && \
+    chmod +x /start.sh
+
+ENTRYPOINT ["/start.sh"]

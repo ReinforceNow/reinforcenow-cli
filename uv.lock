@@ -3201,7 +3201,7 @@ wheels = [
 
 [[package]]
 name = "rnow"
-version = "0.4.9"
+version = "0.4.10"
 source = { editable = "." }
 dependencies = [
     { name = "boto3" },
@@ -3212,6 +3212,7 @@ dependencies = [
     { name = "packaging" },
     { name = "prompt-toolkit" },
     { name = "pydantic" },
+    { name = "python-dotenv" },
     { name = "pyyaml" },
     { name = "requests" },
     { name = "rich" },
@@ -3252,6 +3253,7 @@ requires-dist = [
     { name = "packaging", specifier = ">=21.0" },
     { name = "prompt-toolkit", specifier = ">=3.0.0" },
     { name = "pydantic", specifier = ">=2.0.0" },
+    { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "pyyaml", specifier = ">=5.4.0" },
     { name = "requests", specifier = ">=2.25.0" },
     { name = "rich", specifier = ">=13.0.0" },

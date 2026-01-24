@@ -36,6 +36,8 @@ def convert_entry(entry: dict) -> dict:
             {"role": "user", "content": entry["prompt"]},
         ],
         "tools": ["browse"],
+        # Local Dockerfile (Dockerfile.crawl4ai) that starts crawl4ai server
+        "docker": "local/crawl4ai",
         # No 'rewards' - distillation uses teacher KL penalty, not reward functions
         "metadata": {
             "expected_answer": entry["gold"],
