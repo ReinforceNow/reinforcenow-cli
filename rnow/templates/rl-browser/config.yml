@@ -12,7 +12,7 @@ model:
   path: Qwen/Qwen3-8B
   qlora_rank: 32
   name: "Browser QA Agent"
-  description: "Multi-turn RL agent trained to answer questions using web browsing"
+  description: "Multi-turn RL agent trained to answer factual questions using web browsing"
 algorithm:
   loss_fn: ppo
   adv_estimator: grpo
@@ -21,7 +21,7 @@ rollout:
   max_turns: 4
   max_tokens: 4096
   termination_policy: last_tool
-  max_tool_response_chars: 8000
+  max_context_window: 32768
   tool_timeout: 120
   mcp_url: localhost:8931
 trainer:

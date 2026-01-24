@@ -129,7 +129,7 @@ rollout:
   max_turns: 5              # Max tool calls before final response
   termination_policy: last_tool  # End when model responds without tool call
   tool_timeout: 60          # Per-tool execution timeout (seconds)
-  max_tool_response_chars: 4000  # Truncate long tool responses
+  max_context_window: 32768      # Max context window in tokens (tool results auto-truncated)
 ```
 
 For full config options, see the **rnow-config** skill.

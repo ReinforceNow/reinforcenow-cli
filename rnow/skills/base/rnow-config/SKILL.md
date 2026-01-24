@@ -132,7 +132,7 @@ rollout:
   thinking_mode: null           # null, 'disabled', 'easy', 'medium', 'hard'
   mcp_url: null                 # MCP server URL(s)
   tool_timeout: 60              # Tool execution timeout
-  max_tool_response_chars: 4000 # Truncate tool responses (null to disable)
+  max_context_window: 32768    # Max context window in tokens (tool results auto-truncated)
   include_thinking: false       # Include <think> in history
 
 # Training configuration
@@ -253,7 +253,7 @@ teacher:
 | `thinking_mode` | null | Chain-of-thought mode |
 | `mcp_url` | null | MCP server URL(s) |
 | `tool_timeout` | 60 | Tool execution timeout |
-| `max_tool_response_chars` | 4000 | Truncate tool responses |
+| `max_context_window` | 32768 | Max context window in tokens |
 | `include_thinking` | false | Keep `<think>` in history |
 
 #### Termination Policies
