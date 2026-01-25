@@ -12,7 +12,7 @@ EXPOSE 8931
 RUN echo '#!/bin/bash' > /start.sh && \
     echo 'set -e' >> /start.sh && \
     echo 'echo "Creating Browserbase session..."' >> /start.sh && \
-    echo 'RESPONSE=$(curl -s -X POST "https://api.browserbase.com/v1/sessions" -H "X-BB-API-Key: $BROWSERBASE_API_KEY" -H "Content-Type: application/json" -d "{\"projectId\": \"$BROWSERBASE_PROJECT_ID\"}")' >> /start.sh && \
+    echo 'RESPONSE=$(curl -s -X POST "https://api.browserbase.com/v1/sessions" -H "X-BB-API-Key: $BROWSERBASE_API_KEY" -H "Content-Type: application/json" -d "{\"projectId\": \"$BROWSERBASE_PROJECT_ID\", \"keepAlive\": true, \"timeout\": 300}")' >> /start.sh && \
     echo 'SESSION_ID=$(echo "$RESPONSE" | jq -r ".id")' >> /start.sh && \
     echo 'if [ -z "$SESSION_ID" ] || [ "$SESSION_ID" = "null" ]; then echo "ERROR: $RESPONSE"; exit 1; fi' >> /start.sh && \
     echo 'echo "Session: $SESSION_ID"' >> /start.sh && \
