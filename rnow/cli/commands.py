@@ -210,19 +210,21 @@ from rnow.cli.token_count import (
 )
 
 
-def validate_max_tokens_for_context(
-    max_tokens: int, max_prompt_tokens: int, context_window: int = models.MAX_CONTEXT_WINDOW
+def validate_context_window(
+    max_context_window: int, max_prompt_tokens: int
 ) -> tuple[str | None, int]:
     """
-    Validate that max_tokens + max_prompt_tokens fits within context window.
-    Returns (error_message, recommended_max_tokens). Error is None if valid.
+    Validate that prompt tokens fit within context window with room for generation.
+    Returns (error_message, recommended_buffer). Error is None if valid.
     """
-    total_required = max_tokens + max_prompt_tokens
-    available = context_window - max_prompt_tokens
-    if total_required > context_window:
+    # Reserve at least 2000 tokens for generation
+    min_buffer = 2000
+    available = max_context_window - max_prompt_tokens
+
+    if available < min_buffer:
         return (
-            f"max_tokens ({max_tokens:,}) + prompt ({max_prompt_tokens:,}) = {total_required:,} > context window ({context_window:,})",
-            available,
+            f"Prompt ({max_prompt_tokens:,}) leaves only {available:,} tokens for generation (need at least {min_buffer:,})",
+            max_context_window - max_prompt_tokens,
         )
     return None, available
 
@@ -1600,18 +1602,19 @@ def _submit_single_run(
             # Count tokens with proper format (includes Harmony rendering for gpt-oss)
             total_prompt_tokens = get_max_prompt_tokens(train_jsonl_path, all_tools, model_path)
 
+            available = config.rollout.max_context_window - total_prompt_tokens
             click.echo(
-                f"  [{model_name}] Total: {total_prompt_tokens:,} + {config.rollout.max_tokens:,} = {total_prompt_tokens + config.rollout.max_tokens:,} / {models.MAX_CONTEXT_WINDOW:,}"
+                f"  [{model_name}] Prompt: {total_prompt_tokens:,} / {config.rollout.max_context_window:,} "
+                f"(leaves {available:,} tokens for generation)"
             )
 
-            context_error, recommended = validate_max_tokens_for_context(
-                config.rollout.max_tokens, total_prompt_tokens
+            context_error, available_for_gen = validate_context_window(
+                config.rollout.max_context_window, total_prompt_tokens
             )
             if context_error:
                 raise click.ClickException(
-                    f"Context window exceeded for {model_name}: "
-                    f"~{total_prompt_tokens:,} prompt+tools + {config.rollout.max_tokens:,} max_tokens "
-                    f"> {models.MAX_CONTEXT_WINDOW:,}. Set max_tokens to {recommended:,} or less."
+                    f"Context window issue for {model_name}: {context_error}. "
+                    f"Increase max_context_window or simplify your prompt/tools."
                 )
 
     # Check if train.jsonl needs blob upload
@@ -1811,20 +1814,20 @@ def run(
         rnow run model.path=Qwen/Qwen3-4B
         rnow run algorithm.adv_estimator=grpo trainer.learning_rate=0.0002
         rnow run data.batch_size=8 data.group_size=16 trainer.num_epochs=5
-        rnow run rollout.max_turns=3 rollout.max_tokens=4096
+        rnow run rollout.max_turns=3 rollout.max_context_window=16384
 
     \b
     Common overrides:
-        model.path              Model to train (e.g., Qwen/Qwen3-8B, Qwen/Qwen3-4B)
-        model.qlora_rank        LoRA rank (default: 32)
-        data.batch_size         Batch size (1-32)
-        data.group_size         Rollouts per prompt for RL (1-64)
-        trainer.num_epochs      Number of training epochs
-        trainer.learning_rate   Learning rate (default: 0.0001)
-        algorithm.adv_estimator Advantage estimator: grpo, gae, reinforce
-        algorithm.loss_fn       Loss function: ppo, importance_sampling
-        rollout.max_turns       Max conversation turns for RL
-        rollout.max_tokens      Max tokens per generation
+        model.path                   Model to train (e.g., Qwen/Qwen3-8B, Qwen/Qwen3-4B)
+        model.qlora_rank             LoRA rank (default: 32)
+        data.batch_size              Batch size (1-32)
+        data.group_size              Rollouts per prompt for RL (1-64)
+        trainer.num_epochs           Number of training epochs
+        trainer.learning_rate        Learning rate (default: 0.0001)
+        algorithm.adv_estimator      Advantage estimator: grpo, gae, reinforce
+        algorithm.loss_fn            Loss function: ppo, importance_sampling
+        rollout.max_turns            Max conversation turns for RL
+        rollout.max_context_window   Max context window (default: 32768)
         rollout.thinking_mode   Reasoning mode: disabled, easy, medium, hard
 
     Multi-model training:
@@ -2172,38 +2175,40 @@ def run(
         if total_prompt_tokens > 0:
             is_gpt_oss = "gpt-oss" in model_path.lower()
             format_note = " (Harmony format)" if is_gpt_oss else ""
+            available = config.rollout.max_context_window - total_prompt_tokens
             click.echo(
                 click.style("Context: ", fg=TEAL_RGB)
                 + f"~{total_prompt_tokens:,} prompt+tools{format_note}"
-                + f" + {config.rollout.max_tokens:,} max_tokens"
-                + f" = ~{total_prompt_tokens + config.rollout.max_tokens:,}"
-                + f" / {models.MAX_CONTEXT_WINDOW:,}"
+                + f" / {config.rollout.max_context_window:,}"
+                + f" (leaves ~{available:,} for generation)"
             )
-            context_error, recommended = validate_max_tokens_for_context(
-                config.rollout.max_tokens, total_prompt_tokens
+            context_error, available_for_gen = validate_context_window(
+                config.rollout.max_context_window, total_prompt_tokens
             )
             if context_error:
                 click.echo()
-                click.echo(click.style("✗ Context window exceeded", fg="red", bold=True))
+                click.echo(click.style("✗ Context window issue", fg="red", bold=True))
                 click.echo()
                 click.echo(f"  Total prompt context (with tools): ~{total_prompt_tokens:,} tokens.")
                 if is_gpt_oss:
                     click.echo(
                         "  Note: gpt-oss uses Harmony format which includes system overhead."
                     )
-                click.echo(f"  With max_tokens={config.rollout.max_tokens:,}, the total exceeds")
-                click.echo(f"  the {models.MAX_CONTEXT_WINDOW:,} token context window.")
+                click.echo(f"  Context window: {config.rollout.max_context_window:,} tokens")
+                click.echo(f"  Available for generation: {available:,} tokens (need at least 2000)")
                 click.echo()
                 click.echo(
                     click.style("  Fix:", bold=True)
-                    + f" Set rollout.max_tokens to {recommended:,} or less"
+                    + " Increase max_context_window or simplify your prompt/tools"
                 )
                 click.echo()
                 click.echo(click.style("  In config.yml:", dim=True))
                 click.echo(click.style("    rollout:", dim=True))
-                click.echo(f"      max_tokens: {click.style(str(recommended), fg=TEAL_RGB)}")
+                click.echo(
+                    f"      max_context_window: {click.style(str(config.rollout.max_context_window + 8192), fg=TEAL_RGB)}"
+                )
                 click.echo()
-                raise click.ClickException("max_tokens + prompt length exceeds context window")
+                raise click.ClickException("Not enough room for generation in context window")
 
     # Validate requirements.txt if present (check format and Python 3.11 compatibility)
     requirements_path = dir / "requirements.txt"

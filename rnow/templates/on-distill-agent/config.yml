@@ -24,7 +24,7 @@ teacher:
 
 rollout:
   max_turns: 4  # Medical research may need multiple searches
-  max_tokens: 4096
+  max_context_window: 4096
   termination_policy: last_tool
   tool_timeout: 120
   mcp_url: localhost:8931  # Playwright MCP server in Docker

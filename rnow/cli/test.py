@@ -77,7 +77,7 @@ class RolloutClient:
         self,
         api_base: str,
         model: str,
-        max_tokens: int = 2048,
+        max_context_window: int = 32768,
         temperature: float = 1.0,
         max_turns: int = 1,
         termination_policy: str = "last_tool",
@@ -88,7 +88,7 @@ class RolloutClient:
     ):
         self.api_base = api_base.rstrip("/")
         self.model = model
-        self.max_tokens = max_tokens
+        self.max_context_window = max_context_window
         self.temperature = temperature
         self.max_turns = max_turns
         self.termination_policy = termination_policy
@@ -231,7 +231,7 @@ class RolloutClient:
                 payload = {
                     "samples": samples,
                     "model": self.model,
-                    "max_tokens": self.max_tokens,
+                    "max_context_window": self.max_context_window,
                     "temperature": self.temperature,
                     "max_turns": self.max_turns,
                     "termination_policy": self.termination_policy,
@@ -425,10 +425,10 @@ class RolloutClient:
     "or a finetuned model ID.",
 )
 @click.option(
-    "--max-tokens",
+    "--max-context-window",
     default=None,
     type=int,
-    help="Override max tokens for generation (otherwise uses config.rollout.max_tokens)",
+    help="Override max context window (otherwise uses config.rollout.max_context_window)",
 )
 @click.option(
     "--api-url",
@@ -457,7 +457,7 @@ def test(
     project_dir,
     num_rollouts,
     model,
-    max_tokens,
+    max_context_window,
     api_url,
     debug,
     entries,
@@ -506,7 +506,7 @@ def test(
                 project_dir=project_dir,
                 num_rollouts=num_rollouts,
                 model_override=model,
-                max_tokens_override=max_tokens,
+                max_context_window_override=max_context_window,
                 api_url=resolved_api_url,
                 debug=debug,
                 openai_api_key=openai_api_key,
@@ -694,7 +694,7 @@ async def _test_async(
     project_dir: Path,
     num_rollouts: int,
     model_override: str | None,
-    max_tokens_override: int | None,
+    max_context_window_override: int | None,
     api_url: str,
     debug: bool = False,
     openai_api_key: str | None = None,
@@ -835,11 +835,11 @@ async def _test_async(
         click.echo()
         raise SystemExit(1)
 
-    # Get rollout settings from config (--max-tokens overrides config)
-    max_tokens = (
-        max_tokens_override
-        if max_tokens_override
-        else (config.rollout.max_tokens if config.rollout else 2048)
+    # Get rollout settings from config (--max-context-window overrides config)
+    max_context_window = (
+        max_context_window_override
+        if max_context_window_override
+        else (config.rollout.max_context_window if config.rollout else 32768)
     )
     max_turns = config.rollout.max_turns if config.rollout else 1
     termination_policy = config.rollout.termination_policy if config.rollout else "last_tool"
@@ -898,7 +898,7 @@ async def _test_async(
         client = RolloutClient(
             api_base=api_url,
             model=model_name,
-            max_tokens=max_tokens,
+            max_context_window=max_context_window,
             temperature=1.0,
             max_turns=max_turns,
             termination_policy=termination_policy,

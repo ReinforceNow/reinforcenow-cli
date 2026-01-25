@@ -16,7 +16,7 @@ algorithm:
 
 rollout:
   max_turns: 1
-  max_tokens: 4096
+  max_context_window: 4096
 
 trainer:
   num_epochs: 3

@@ -19,7 +19,7 @@ algorithm:
   kl_penalty_coef: 0.01
 rollout:
   max_turns: 3
-  max_tokens: 4096
+  max_context_window: 4096
   termination_policy: last_tool
   mcp_url: "https://mcp.tavily.com/mcp/?tavilyApiKey=YOUR_TAVILY_API_KEY"
 trainer:

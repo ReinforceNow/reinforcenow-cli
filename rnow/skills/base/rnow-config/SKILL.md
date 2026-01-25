@@ -79,7 +79,7 @@ teacher:
   path: Qwen/Qwen3-32B       # Teacher model (larger)
 
 rollout:
-  max_tokens: 8192
+  max_context_window: 8192
 
 trainer:
   num_epochs: 3
@@ -127,7 +127,7 @@ algorithm:
 # Rollout configuration (RL only)
 rollout:
   max_turns: 1                  # Max conversation turns
-  max_tokens: 2048              # Max tokens per generation
+  max_context_window: 2048              # Max tokens per generation
   termination_policy: last_tool # 'last_tool' or 'max_turns'
   thinking_mode: null           # null, 'disabled', 'easy', 'medium', 'hard'
   mcp_url: null                 # MCP server URL(s)
@@ -248,7 +248,7 @@ teacher:
 | Field | Default | Description |
 |-------|---------|-------------|
 | `max_turns` | 1 | Max conversation turns |
-| `max_tokens` | 2048 | Max tokens per generation |
+| `max_context_window` | 2048 | Max tokens per generation |
 | `termination_policy` | last_tool | When to end episode |
 | `thinking_mode` | null | Chain-of-thought mode |
 | `mcp_url` | null | MCP server URL(s) |
@@ -275,7 +275,7 @@ For models that support chain-of-thought (`<think>` tags):
 | `medium` | Moderate reasoning |
 | `hard` | Deep reasoning (more tokens) |
 
-**Important**: Reasoning models need higher `max_tokens` (8192-16384).
+**Important**: Reasoning models need higher `max_context_window` (8192-16384).
 
 #### MCP Configuration
 
@@ -480,7 +480,7 @@ algorithm:
 
 rollout:
   max_turns: 1
-  max_tokens: 8192  # High for reasoning
+  max_context_window: 8192  # High for reasoning
   thinking_mode: medium
 
 trainer:
@@ -504,7 +504,7 @@ model:
 
 rollout:
   max_turns: 5
-  max_tokens: 2048
+  max_context_window: 2048
   termination_policy: last_tool
   tool_timeout: 30
 
@@ -529,7 +529,7 @@ model:
 
 rollout:
   max_turns: 3
-  max_tokens: 4096
+  max_context_window: 4096
   tool_timeout: 120  # Longer for code execution
 
 trainer:
@@ -577,7 +577,7 @@ teacher:
   path: Qwen/Qwen3-32B         # Teacher
 
 rollout:
-  max_tokens: 8192             # Enough for reasoning
+  max_context_window: 8192             # Enough for reasoning
 
 trainer:
   num_epochs: 3

@@ -379,7 +379,7 @@ Rate accuracy, clarity, and completeness from 0-10."""
 | `schema` | binary 0/1 | Custom JSON schema |
 | `score_key` | "score" | Field to extract |
 | `temperature` | 0.0 | Sampling temperature |
-| `max_tokens` | 256 | Max response tokens |
+| `max_context_window` | 256 | Max response tokens |
 | `timeout` | 30 | Request timeout |
 
 ## Combining Multiple Rewards

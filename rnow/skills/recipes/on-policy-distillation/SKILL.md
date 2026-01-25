@@ -135,7 +135,7 @@ algorithm:
 
 rollout:
   max_turns: 10
-  max_tokens: 4096
+  max_context_window: 4096
   termination_policy: last_tool
 ```
 

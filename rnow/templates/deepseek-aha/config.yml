@@ -19,7 +19,7 @@ algorithm:
   kl_penalty_coef: 0.001
 rollout:
   max_turns: 1
-  max_tokens: 16384
+  max_context_window: 16384
 trainer:
   num_epochs: 4
   learning_rate: 0.00005

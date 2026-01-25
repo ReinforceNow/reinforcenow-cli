@@ -389,7 +389,11 @@ class RolloutConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     max_turns: int = Field(default=1, gt=0)
-    max_tokens: int = Field(default=2048, gt=0)
+    max_context_window: int = Field(
+        default=32768,
+        gt=0,
+        description="Maximum context window in tokens. Rollouts are marked as truncated if conversation exceeds this. Default 32768 (32k).",
+    )
     termination_policy: Literal["max_turns", "last_tool"] = "last_tool"
     thinking_mode: Literal["disabled", "easy", "medium", "hard"] | None = (
         None  # None = model default
@@ -406,12 +410,7 @@ class RolloutConfig(BaseModel):
     max_tool_response: int | None = Field(
         default=None,
         gt=0,
-        description="Maximum tokens for tool responses. Responses longer than this are truncated. Default None (no limit, only context-based truncation).",
-    )
-    max_context_window: int = Field(
-        default=32768,
-        gt=0,
-        description="Maximum context window in tokens. Tool results are automatically truncated to fit. Default 32768 (32k).",
+        description="Maximum tokens for tool responses. Responses longer than this are truncated (expected behavior, not marked as truncated). Default None (no limit).",
     )
     include_thinking: bool = Field(
         default=False,
