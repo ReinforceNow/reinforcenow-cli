@@ -9,11 +9,6 @@ This template trains a model to:
 2. Use standard Playwright commands (click, type, snapshot) to interact with pages
 3. Extract information and provide accurate answers
 
-**Key difference from `stagehand-agent`**: Uses direct Playwright commands instead of Stagehand:
-- Standard browser automation commands (click, type, navigate)
-- Lower latency per action (no AI interpretation for actions)
-- More precise control over browser interactions
-
 ## Setup
 
 ### 1. Get API Keys
@@ -108,18 +103,6 @@ The LLM judge allows flexible matching - "Michio Sugeno" matches "Sugeno, Michio
 The Dockerfile includes automatic session cleanup:
 - On container stop (SIGTERM/SIGINT), the Browserbase session is released via API
 - This prevents orphaned sessions from counting against your concurrent session limit
-
-## Stagehand vs Playwright
-
-| Feature | Stagehand | Playwright |
-|---------|-----------|------------|
-| Commands | Natural language ("click login") | Direct selectors (click ref=5) |
-| AI Layer | Yes (uses OPENAI_API_KEY) | No |
-| Latency | Higher (AI interprets actions) | Lower (direct commands) |
-| Flexibility | More forgiving | More precise |
-
-Choose **Stagehand** if you want natural language actions.
-Choose **Playwright** if you want lower latency and more precise control.
 
 ## Pricing
 
