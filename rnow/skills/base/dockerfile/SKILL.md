@@ -152,6 +152,113 @@ ENTRYPOINT ["/start.sh"]
 **Without `--allowed-hosts "*"`:** Modal tunnel connection gets 403 Forbidden
 **With `--allowed-hosts "*"`:** Connections from any host are accepted
 
+## Cleanup with /terminate.sh
+
+When a rollout completes, ReinforceNow automatically runs `/terminate.sh` before terminating the sandbox. Use this to release external resources (sessions, connections, etc.).
+
+**The CLI shows cleanup status:**
+```
+Rollout 1: ✓ reward=2.000  [cleanup ✓]   # terminate.sh ran successfully
+Rollout 1: ✓ reward=2.000  [cleanup ✗]   # terminate.sh not found or failed
+```
+
+### How It Works
+
+```
+Rollout completes:
+1. ReinforceNow calls: sandbox.exec("/terminate.sh")  ← Your cleanup runs
+2. ReinforceNow calls: sandbox.terminate()            ← Container killed
+```
+
+**No SIGTERM traps needed** - we explicitly call your script before killing the container.
+
+### Creating /terminate.sh
+
+Add your cleanup logic to `/terminate.sh`:
+
+```dockerfile
+# Option 1: Inline in Dockerfile
+RUN echo '#!/bin/bash' > /terminate.sh && \
+    echo '# YOUR CLEANUP CODE HERE' >> /terminate.sh && \
+    echo 'echo "Cleaning up..."' >> /terminate.sh && \
+    echo 'curl --max-time 5 -X POST "https://api.example.com/release" || true' >> /terminate.sh && \
+    chmod +x /terminate.sh
+
+# Option 2: Copy from file
+COPY terminate.sh /terminate.sh
+RUN chmod +x /terminate.sh
+```
+
+### Requirements
+
+1. **Must be at `/terminate.sh`** (or `/app/terminate.sh`)
+2. **Must be executable** (`chmod +x`)
+3. **Use timeouts** on network calls (`--max-time 5`) to avoid hanging
+4. **Handle errors gracefully** (`|| true`) - don't fail the cleanup
+
+### Example: Release Browserbase Session
+
+```bash
+#!/bin/bash
+# /terminate.sh - releases Browserbase session
+
+if [ -f /tmp/browserbase_session_id ]; then
+  SESSION_ID=$(cat /tmp/browserbase_session_id)
+  echo "Releasing Browserbase session $SESSION_ID..."
+  curl -sS --max-time 5 -X POST \
+    "https://api.browserbase.com/v1/sessions/$SESSION_ID" \
+    -H "X-BB-API-Key: $BROWSERBASE_API_KEY" \
+    -H "Content-Type: application/json" \
+    -d "{\"projectId\":\"$BROWSERBASE_PROJECT_ID\",\"status\":\"REQUEST_RELEASE\"}" || true
+  echo "Done"
+fi
+```
+
+### Example: Close Database Connection
+
+```bash
+#!/bin/bash
+# /terminate.sh - close DB connection
+
+if [ -n "$DB_CONNECTION_ID" ]; then
+  echo "Closing database connection..."
+  curl --max-time 5 -X DELETE \
+    "https://db.example.com/connections/$DB_CONNECTION_ID" || true
+fi
+```
+
+### Example: Generic Cleanup
+
+```bash
+#!/bin/bash
+# /terminate.sh - generic cleanup
+
+echo "Running cleanup..."
+
+# Kill any background processes
+pkill -f "my-server" || true
+
+# Remove temp files
+rm -rf /tmp/session_* || true
+
+# Notify external service
+curl --max-time 5 -X POST "https://api.example.com/cleanup" \
+  -d '{"container_id": "'$HOSTNAME'"}' || true
+
+echo "Cleanup complete"
+```
+
+### Why /terminate.sh Instead of SIGTERM Traps?
+
+| | /terminate.sh | SIGTERM trap |
+|---|---|---|
+| Complexity | Simple script | Complex bash (traps, PID handling, wait loops) |
+| Guaranteed to run | Yes (we call it explicitly) | No (race with SIGKILL) |
+| PID 1 issues | None | Yes (signals may not reach your process) |
+| User code | Standalone file | Buried in entrypoint |
+
+For ReinforceNow/Modal, `/terminate.sh` is simpler and more reliable
+
 ## Common Issues
 
 | Issue | Fix |
@@ -162,3 +269,4 @@ ENTRYPOINT ["/start.sh"]
 | `Platform mismatch` | Build with `--platform linux/amd64` |
 | `Server not responding` | Check `supervisord.conf` or similar for actual startup commands |
 | `403 Forbidden` | Add `--allowed-hosts '*'` to MCP server command (localhost restriction) |
+| `Cleanup not running` | Create `/terminate.sh` instead of using trap |

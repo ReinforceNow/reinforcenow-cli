@@ -9,7 +9,7 @@ valid responses.
 import os
 from typing import Any
 
-import requests
+import aiohttp
 
 # Default schema: binary 0/1 score
 DEFAULT_SCHEMA = {
@@ -26,7 +26,7 @@ DEFAULT_SCHEMA = {
 }
 
 
-def llm_judge(
+async def llm_judge(
     prompt: str,
     *,
     api_url: str | None = None,
@@ -64,14 +64,14 @@ def llm_judge(
 
     Example (default 0/1 scoring):
         @reward
-        def quality(args: RewardArgs, messages: list) -> float:
+        async def quality(args: RewardArgs, messages: list) -> float:
             response = get_response(messages)
             prompt = f"Is this response helpful? Answer 1 or 0.\\n\\n{response}"
-            return llm_judge(prompt, secrets=args.secrets)
+            return await llm_judge(prompt, secrets=args.secrets)
 
     Example (custom schema with 0-10 scale):
         @reward
-        def detailed_quality(args: RewardArgs, messages: list) -> float:
+        async def detailed_quality(args: RewardArgs, messages: list) -> float:
             custom_schema = {
                 "type": "object",
                 "properties": {
@@ -81,11 +81,12 @@ def llm_judge(
                 "required": ["reasoning", "score"],
                 "additionalProperties": False
             }
-            return llm_judge(
+            score = await llm_judge(
                 prompt,
                 secrets=args.secrets,
                 schema=custom_schema,
-            ) / 10.0  # Normalize to 0-1
+            )
+            return score / 10.0  # Normalize to 0-1
     """
     url = api_url or os.environ.get(
         "LLM_JUDGE_API_URL", "https://api.openai.com/v1/responses"
@@ -126,15 +127,16 @@ def llm_judge(
     if not model.startswith("gpt-5"):
         payload["temperature"] = temperature
 
-    resp = requests.post(
-        url,
-        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-        json=payload,
-        timeout=timeout,
-    )
-    resp.raise_for_status()
+    async with aiohttp.ClientSession() as session:
+        async with session.post(
+            url,
+            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+            json=payload,
+            timeout=aiohttp.ClientTimeout(total=timeout),
+        ) as resp:
+            resp.raise_for_status()
+            data = await resp.json()
 
-    data = resp.json()
     return _parse_structured_response(data, score_key)
 
 
