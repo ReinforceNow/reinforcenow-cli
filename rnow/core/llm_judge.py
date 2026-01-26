@@ -1,7 +1,7 @@
 """
 LLM Judge - Use an LLM to evaluate responses with structured outputs.
 
-Provides an LLM judge that uses OpenAI's structured outputs feature
+Provides an LLM judge that uses OpenAI's Responses API with structured outputs
 to reliably return scores. Always uses structured outputs for guaranteed
 valid responses.
 """
@@ -32,9 +32,9 @@ def llm_judge(
     api_url: str | None = None,
     api_key: str | None = None,
     secrets: dict[str, Any] | None = None,
-    model: str = "gpt-5.2-nano",
+    model: str = "gpt-5-nano",
     temperature: float = 0.0,
-    max_tokens: int = 50,
+    max_tokens: int = 1024,
     timeout: int = 60,
     schema: dict | None = None,
     score_key: str = "score",
@@ -43,17 +43,17 @@ def llm_judge(
     """
     Send a prompt to an LLM and get a score using structured outputs.
 
-    Always uses OpenAI's structured outputs to guarantee a valid JSON response.
+    Uses OpenAI's Responses API with structured outputs to guarantee a valid JSON response.
     By default returns 0 or 1, but you can provide a custom schema.
 
     Args:
         prompt: The prompt to send to the LLM (should ask for a score)
-        api_url: OpenAI-compatible API endpoint (default: OpenAI)
+        api_url: OpenAI Responses API endpoint (default: OpenAI)
         api_key: API key (takes priority over secrets/env)
         secrets: Dict of secrets (e.g., args.secrets) - checks for OPENAI_API_KEY
-        model: Model to use (default: gpt-5.2-nano)
+        model: Model to use (default: gpt-5-nano)
         temperature: Sampling temperature (default: 0.0)
-        max_tokens: Max tokens in response (default: 50)
+        max_tokens: Max tokens in response (default: 1024)
         timeout: Request timeout in seconds (default: 60)
         schema: Custom JSON schema for structured output (default: binary 0/1)
         score_key: Key to extract score from response (default: "score")
@@ -88,7 +88,7 @@ def llm_judge(
             ) / 10.0  # Normalize to 0-1
     """
     url = api_url or os.environ.get(
-        "LLM_JUDGE_API_URL", "https://api.openai.com/v1/chat/completions"
+        "LLM_JUDGE_API_URL", "https://api.openai.com/v1/responses"
     )
 
     # Resolve API key: explicit > secrets dict > env vars
@@ -106,18 +106,25 @@ def llm_judge(
     # Use custom schema or default binary schema
     output_schema = schema or DEFAULT_SCHEMA
 
-    # Build the request payload with structured outputs
+    # Build the request payload for Responses API with structured outputs
     payload = {
         "model": model,
-        "messages": [{"role": "user", "content": prompt}],
-        "temperature": temperature,
-        "max_tokens": max_tokens,
-        "response_format": {
-            "type": "json_schema",
-            "json_schema": {"name": "judge_score", "strict": True, "schema": output_schema},
+        "input": [{"role": "user", "content": prompt}],
+        "max_output_tokens": max_tokens,
+        "text": {
+            "format": {
+                "type": "json_schema",
+                "name": "judge_score",
+                "strict": True,
+                "schema": output_schema,
+            }
         },
         **kwargs,
     }
+
+    # Only add temperature for models that support it (gpt-5 models don't)
+    if not model.startswith("gpt-5"):
+        payload["temperature"] = temperature
 
     resp = requests.post(
         url,
@@ -150,7 +157,8 @@ def _parse_structured_response(data: dict, score_key: str = "score") -> float:
         for item in data["output"]:
             if item.get("type") == "message":
                 for content in item.get("content", []):
-                    if content.get("type") == "text":
+                    # Handle both "text" and "output_text" content types
+                    if content.get("type") in ("text", "output_text"):
                         try:
                             parsed = json.loads(content["text"])
                             score = parsed.get(score_key, 0)

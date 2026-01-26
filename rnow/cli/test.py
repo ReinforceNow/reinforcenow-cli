@@ -170,21 +170,44 @@ class RolloutClient:
                     reward = result.get("total_reward")
                     breakdown = result.get("rewards", {})
                     rid = rollout_ids.get(i, "")
+                    reward_errors = result.get("errors", [])
+
+                    # Check if any reward returned "error" or "timeout"
+                    has_reward_error = any(
+                        v in ("error", "timeout") for v in breakdown.values()
+                    ) if breakdown else False
+
                     text.append(f"Rollout {i + 1}: ", style=f"bold {TEAL}")
-                    text.append("✓", style="green")
+
+                    # Show red ✗ if any reward errored, green ✓ otherwise
+                    if has_reward_error:
+                        text.append("✗", style="red")
+                        # When rewards error, effective reward is 0
+                        display_reward = 0.0
+                    else:
+                        text.append("✓", style="green")
+                        display_reward = reward
+
                     # Show reward if available (RL mode)
                     if reward is not None:
-                        text.append(f" reward={reward:.3f}", style="green")
+                        reward_style = "red" if has_reward_error else "green"
+                        text.append(f" reward={display_reward:.3f}", style=reward_style)
                         if breakdown:
                             # Handle both float values and string values (like "timeout" or "error")
                             bd = ", ".join(
                                 f"{k}={v:.3f}" if isinstance(v, int | float) else f"{k}={v}"
                                 for k, v in breakdown.items()
                             )
-                            text.append(f"  [{bd}]", style="green")
+                            text.append(f"  [{bd}]", style=reward_style)
                     if rid:
                         text.append(f"  written to rollouts/{rid}.json", style="dim")
                     text.append("\n")
+
+                    # Show reward errors (e.g., LLM judge failures)
+                    if reward_errors:
+                        for err in reward_errors:
+                            text.append(f"    ⚠ {err}\n", style="yellow")
+
                     # Show tool errors if any (helps debug API key issues, etc.)
                     tool_errors = result.get("tool_errors", [])
                     if tool_errors:
@@ -644,13 +667,34 @@ def _display_results(
             click.echo(f"  {tag} {content}")
 
         reward_breakdown = result.get("rewards", {})
-        reward_str = ", ".join(f"{k}={v:.3f}" for k, v in reward_breakdown.items())
+        reward_errors = result.get("errors", [])
+
+        # Check if any reward returned "error" or "timeout"
+        has_reward_error = any(
+            v in ("error", "timeout") for v in reward_breakdown.values()
+        ) if reward_breakdown else False
+
+        # Handle both float values and string values (like "timeout" or "error")
+        reward_str = ", ".join(
+            f"{k}={v:.3f}" if isinstance(v, int | float) else f"{k}={v}"
+            for k, v in reward_breakdown.items()
+        )
         turns = result.get("turns", 0)
+
+        # Show reward=0 if any reward errored
+        display_reward = 0.0 if has_reward_error else total_reward
+        reward_color = "red" if has_reward_error else TEAL_RGB
+
         click.echo(
-            f"  {click.style('reward', fg=TEAL_RGB)}={total_reward:.3f} "
+            f"  {click.style('reward', fg=reward_color)}={display_reward:.3f} "
             f"| turns={turns} "
             f"| [{reward_str}]"
         )
+
+        # Show reward errors
+        if reward_errors:
+            for err in reward_errors:
+                click.echo(click.style(f"    ⚠ {err}", fg="yellow"))
 
         # Show metadata (ground truth, etc.)
         metadata = result.get("metadata", {})
