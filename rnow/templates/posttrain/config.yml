@@ -1,0 +1,17 @@
+project_id: ""
+project_name: "Posttrain Project"
+dataset_id: ""
+dataset_name: "custom-corpus"
+dataset_type: midtrain
+data:
+  train_file: train.jsonl
+  batch_size: 8
+model:
+  path: Qwen/Qwen3-8B-Base
+  qlora_rank: 64
+  name: "My Posttrain Model"
+  description: "Continued pretraining on domain text"
+trainer:
+  num_epochs: 3
+  learning_rate: 0.0001
+  save_step: 100

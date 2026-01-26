@@ -24,13 +24,16 @@ def get_tokenizer_for_model(model_path: str) -> tuple[str, Any] | None:
 
     Returns:
         Tuple of (tokenizer_type, tokenizer) or None if unavailable.
-        tokenizer_type is "harmony" for gpt-oss, "hf" for HuggingFace models.
+        tokenizer_type is "harmony" for gpt-oss, "tiktoken" for OpenAI models,
+        "hf" for HuggingFace models.
     """
     if model_path in _tokenizer_cache:
         return _tokenizer_cache[model_path]
 
+    model_lower = model_path.lower()
+
     # gpt-oss models use openai-harmony
-    if "gpt-oss" in model_path.lower():
+    if "gpt-oss" in model_lower:
         try:
             from openai_harmony import HarmonyEncodingName, load_harmony_encoding
 
@@ -39,17 +42,29 @@ def get_tokenizer_for_model(model_path: str) -> tuple[str, Any] | None:
             return _tokenizer_cache[model_path]
         except ImportError:
             pass
-    else:
-        # Try HuggingFace tokenizers (requires tokenizer.json in repo)
-        try:
-            from tokenizers import Tokenizer
 
-            tokenizer = Tokenizer.from_pretrained(model_path)
-            _tokenizer_cache[model_path] = ("hf", tokenizer)
+    # OpenAI models (gpt-4, gpt-4o, gpt-5, o1, o3, etc.) use tiktoken
+    if any(prefix in model_lower for prefix in ["gpt-4", "gpt-5", "o1", "o3", "openai/"]):
+        try:
+            import tiktoken
+
+            # o200k_base is used by gpt-4o and gpt-5 models
+            tokenizer = tiktoken.get_encoding("o200k_base")
+            _tokenizer_cache[model_path] = ("tiktoken", tokenizer)
             return _tokenizer_cache[model_path]
-        except Exception:
-            # tokenizer.json not available or repo requires auth
+        except ImportError:
             pass
+
+    # Try HuggingFace tokenizers (requires tokenizer.json in repo)
+    try:
+        from tokenizers import Tokenizer
+
+        tokenizer = Tokenizer.from_pretrained(model_path)
+        _tokenizer_cache[model_path] = ("hf", tokenizer)
+        return _tokenizer_cache[model_path]
+    except Exception:
+        # tokenizer.json not available or repo requires auth
+        pass
 
     _tokenizer_cache[model_path] = None
     return None
@@ -191,8 +206,11 @@ def count_tokens_for_hf_model(messages: list[dict], tools: list[dict], model_pat
         if tokenizer_type == "hf":
             encoded = tokenizer.encode(full_prompt)
             return len(encoded.ids)
+        elif tokenizer_type == "tiktoken":
+            # tiktoken encoding for OpenAI models (gpt-4, gpt-5)
+            return len(tokenizer.encode(full_prompt))
         else:
-            # Shouldn't happen, but handle gracefully
+            # Unknown type, use char-based estimate
             return len(full_prompt)
     except Exception:
         return len(full_prompt)
@@ -203,12 +221,13 @@ def count_tokens_for_prompt(messages: list[dict], tools: list[dict], model_path:
     Count tokens for a prompt with the correct format for the model.
 
     For gpt-oss: Uses Harmony render_conversation_for_completion (exact)
+    For OpenAI models (gpt-4, gpt-5): Uses tiktoken with o200k_base encoding
     For HF models: Uses tokenizer with chat template approximation (conservative)
     Fallback: Char-based estimate (very conservative)
     """
-    is_gpt_oss = "gpt-oss" in model_path.lower()
+    model_lower = model_path.lower()
 
-    if is_gpt_oss:
+    if "gpt-oss" in model_lower:
         return count_tokens_for_gpt_oss(messages, tools)
 
     return count_tokens_for_hf_model(messages, tools, model_path)

@@ -493,8 +493,13 @@ def validate_train_jsonl(
     from pydantic import ValidationError
 
     errors = []
-    # RL requires rewards field, SFT and DISTILL do not
-    EntryModel = models.TrainEntryRL if dataset_type == models.DatasetType.RL else models.TrainEntry
+    # RL requires rewards field, Midtrain requires text field, SFT and DISTILL use messages
+    if dataset_type == models.DatasetType.RL:
+        EntryModel = models.TrainEntryRL
+    elif dataset_type == models.DatasetType.MIDTRAIN:
+        EntryModel = models.TrainEntryMidtrain
+    else:
+        EntryModel = models.TrainEntry
 
     try:
         with open(path, encoding="utf-8") as f:
@@ -1131,6 +1136,8 @@ def orgs(ctx, org_id: str | None):
             "new",
             "blank",
             "sft",
+            "midtrain",
+            "posttrain",
             "rl-single",
             "rl-nextjs",
             "rl-tools",
@@ -1190,6 +1197,8 @@ def init(template: str, name: str, dataset: str, yes: bool):
         "rl-nextjs": "nextjs-project",
         "mcp-tavily": "mcp-tavily-project",
         "sft": "sft-project",
+        "midtrain": "midtrain-project",
+        "posttrain": "posttrain-project",
         "tutorial-reward": "tutorial-reward",
         "tutorial-tool": "tutorial-tool",
         "deepseek-aha": "deepseek-aha",

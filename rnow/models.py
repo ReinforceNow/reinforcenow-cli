@@ -6,8 +6,7 @@ This module contains ONLY the types that users need:
 - ProjectConfig and related configs for config.yml
 - Basic enums
 
-Trainer-internal types (Env, StepResult, Observation) live in docker/trainer/
-where tinker is available.
+Trainer-internal types (Env, StepResult, Observation) live in docker/trainer/.
 """
 
 from __future__ import annotations
@@ -42,6 +41,7 @@ class DatasetType(str, Enum):
     SFT = "sft"  # Supervised Finetuning
     RL = "rl"  # Reinforcement Learning
     DISTILL = "distill"  # On-policy Distillation
+    MIDTRAIN = "midtrain"  # Continued Pretraining on raw text
 
 
 class LossFunction(str, Enum):
@@ -76,7 +76,7 @@ class RewardArgs(BaseModel):
 def get_response(messages: list) -> str:
     """Extract text content from the last assistant message.
 
-    Handles both string and list content (tinker's ContentPart format).
+    Handles both string and list content (ContentPart format for multi-part responses).
     Only returns "text" type parts - thinking/reasoning is excluded to avoid
     intermediate \\boxed{} expressions confusing parsers like math-verify.
 
@@ -88,7 +88,7 @@ def get_response(messages: list) -> str:
     """
     content = messages[-1].get("content", "") if messages else ""
     if isinstance(content, list):
-        # tinker's ContentPart format: [{type: "thinking", thinking: "..."}, {type: "text", text: "..."}]
+        # ContentPart format: [{type: "thinking", thinking: "..."}, {type: "text", text: "..."}]
         # Only extract "text" type parts - skip "thinking" parts which contain intermediate reasoning
         text_parts = [p.get("text", "") for p in content if p.get("type") == "text"]
         if text_parts:
@@ -142,6 +142,13 @@ class TrainEntryRL(TrainEntry):
     """Train entry for RL datasets - rewards field is required."""
 
     rewards: list[str] = Field(..., min_length=1)
+
+
+class TrainEntryMidtrain(BaseModel):
+    """Train entry for midtrain - raw text for continued pretraining."""
+
+    model_config = ConfigDict(extra="allow")
+    text: str = Field(..., min_length=1)
 
 
 class DeviceCode(BaseModel):
@@ -336,7 +343,7 @@ class ModelConfig(BaseModel):
     resolved_checkpoint_path: str | None = Field(
         default=None,
         alias="_resolvedCheckpointPath",
-        description="Internal: Tinker checkpoint path resolved from model ID",
+        description="Internal: Checkpoint path resolved from model ID",
     )
     resolved_base_model: str | None = Field(
         default=None,
@@ -425,7 +432,7 @@ class TrainerConfig(BaseModel):
 
     num_epochs: int = Field(..., gt=0)
     learning_rate: float = Field(default=0.0001, gt=0)
-    save_step: int = Field(default=0, ge=0)  # Save checkpoint every N steps (0 = end of epoch only)
+    save_step: int = Field(default=-1, ge=-1)  # -1 = end only, 0 = never save, N = every N steps
     eval_step: int = Field(default=0, ge=0)  # Evaluate every N steps (0 = end of epoch only)
 
 
@@ -478,6 +485,17 @@ class ProjectConfig(BaseModel):
             # Set algorithm defaults for distillation (KL penalty settings)
             if self.algorithm is None:
                 self.algorithm = AlgorithmConfig()
+
+        elif self.dataset_type == DatasetType.MIDTRAIN:
+            # Midtrain is like SFT - no RL-specific configs
+            if self.teacher is not None:
+                raise ValueError(
+                    "'teacher' is not available for dataset_type: midtrain. "
+                    "For midtrain, remove the 'teacher' section from config.yml."
+                )
+            # Clear RL-specific configs for midtrain
+            self.algorithm = None
+            self.rollout = None
 
         else:  # SFT
             # Teacher is only for distillation

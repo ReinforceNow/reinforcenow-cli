@@ -139,7 +139,7 @@ rollout:
 trainer:
   num_epochs: 30                # Number of epochs
   learning_rate: 0.0001         # Learning rate
-  save_step: 20                 # -1 = end only, 0 = never, N = every N steps
+  save_step: 20                 # Save checkpoint every N steps (0 = end of epoch)
   eval_step: 0                  # Evaluate every N steps (0 = end of epoch)
 ```
 
@@ -303,7 +303,7 @@ rollout:
 |-------|----------|---------|-------------|
 | `num_epochs` | Yes | - | Number of training epochs |
 | `learning_rate` | Yes | - | Learning rate |
-| `save_step` | No | -1 | -1 = end only, 0 = never save, N = every N steps |
+| `save_step` | No | 0 | Save every N steps (0 = end of epoch) |
 | `eval_step` | No | 0 | Evaluate every N steps (0 = end of epoch) |
 
 ---
