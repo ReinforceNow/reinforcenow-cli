@@ -5,23 +5,34 @@ RUN apt-get update && apt-get install -y curl jq && rm -rf /var/lib/apt/lists/*
 RUN npm install -g @playwright/mcp
 EXPOSE 8931
 
-# Create startup script that:
-# 1. Creates ONE Browserbase session via API
-# 2. Passes CDP endpoint to Playwright MCP
-# 3. Releases session on container stop
+# Startup script: creates Browserbase session and starts Playwright MCP
 RUN echo '#!/bin/bash' > /start.sh && \
     echo 'set -e' >> /start.sh && \
     echo 'echo "Creating Browserbase session..."' >> /start.sh && \
-    echo 'RESPONSE=$(curl -s -X POST "https://api.browserbase.com/v1/sessions" -H "X-BB-API-Key: $BROWSERBASE_API_KEY" -H "Content-Type: application/json" -d "{\"projectId\": \"$BROWSERBASE_PROJECT_ID\", \"keepAlive\": true, \"timeout\": 300}")' >> /start.sh && \
+    echo 'RESPONSE=$(curl -sS --max-time 10 -X POST "https://api.browserbase.com/v1/sessions" \' >> /start.sh && \
+    echo '  -H "X-BB-API-Key: $BROWSERBASE_API_KEY" \' >> /start.sh && \
+    echo '  -H "Content-Type: application/json" \' >> /start.sh && \
+    echo '  -d "{\"projectId\": \"$BROWSERBASE_PROJECT_ID\", \"keepAlive\": true, \"timeout\": 300}")' >> /start.sh && \
     echo 'SESSION_ID=$(echo "$RESPONSE" | jq -r ".id")' >> /start.sh && \
     echo 'if [ -z "$SESSION_ID" ] || [ "$SESSION_ID" = "null" ]; then echo "ERROR: $RESPONSE"; exit 1; fi' >> /start.sh && \
     echo 'echo "Session: $SESSION_ID"' >> /start.sh && \
-    echo 'cleanup() { echo "Releasing session..."; curl -s -X POST "https://api.browserbase.com/v1/sessions/$SESSION_ID" -H "X-BB-API-Key: $BROWSERBASE_API_KEY" -H "Content-Type: application/json" -d "{\"status\":\"REQUEST_RELEASE\"}" || true; }' >> /start.sh && \
-    echo 'trap cleanup EXIT SIGTERM SIGINT' >> /start.sh && \
+    echo 'echo "$SESSION_ID" > /tmp/browserbase_session_id' >> /start.sh && \
     echo 'CDP="wss://connect.browserbase.com?apiKey=$BROWSERBASE_API_KEY&sessionId=$SESSION_ID"' >> /start.sh && \
     echo 'echo "Starting Playwright MCP..."' >> /start.sh && \
-    echo 'npx @playwright/mcp --port 8931 --host 0.0.0.0 --allowed-hosts "*" --cdp-endpoint "$CDP" &' >> /start.sh && \
-    echo 'wait' >> /start.sh && \
+    echo 'npx @playwright/mcp --port 8931 --host 0.0.0.0 --allowed-hosts "*" --cdp-endpoint "$CDP"' >> /start.sh && \
     chmod +x /start.sh
+
+# Cleanup script: releases the Browserbase session (called automatically by ReinforceNow)
+RUN echo '#!/bin/bash' > /terminate.sh && \
+    echo 'if [ -f /tmp/browserbase_session_id ]; then' >> /terminate.sh && \
+    echo '  SESSION_ID=$(cat /tmp/browserbase_session_id)' >> /terminate.sh && \
+    echo '  echo "Releasing Browserbase session $SESSION_ID..."' >> /terminate.sh && \
+    echo '  curl -sS --max-time 5 -X POST "https://api.browserbase.com/v1/sessions/$SESSION_ID" \' >> /terminate.sh && \
+    echo '    -H "X-BB-API-Key: $BROWSERBASE_API_KEY" \' >> /terminate.sh && \
+    echo '    -H "Content-Type: application/json" \' >> /terminate.sh && \
+    echo '    -d "{\"projectId\":\"$BROWSERBASE_PROJECT_ID\",\"status\":\"REQUEST_RELEASE\"}" || true' >> /terminate.sh && \
+    echo '  echo "Session released"' >> /terminate.sh && \
+    echo 'fi' >> /terminate.sh && \
+    chmod +x /terminate.sh
 
 ENTRYPOINT ["/start.sh"]

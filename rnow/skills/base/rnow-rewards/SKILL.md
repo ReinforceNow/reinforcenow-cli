@@ -141,7 +141,7 @@ Best for answers needing semantic understanding or complex text comparisons.
 from rnow.core import RewardArgs, get_response, llm_judge, reward
 
 @reward(timeout=120)
-def accuracy(args: RewardArgs, messages: list) -> float:
+async def accuracy(args: RewardArgs, messages: list) -> float:
     """Judge if model's answer matches expected using LLM."""
     expected = args.metadata["expected_answer"]
     model_answer = get_response(messages)
@@ -151,10 +151,10 @@ def accuracy(args: RewardArgs, messages: list) -> float:
         f"Model: {model_answer}\n\n"
         "Is the model's final answer mathematically equal to expected? "
         "Ignore formatting (\\boxed, LaTeX). Equivalent forms count (1/2=0.5=50%). "
-        "Answer only: Yes or No"
+        "Answer 1 if correct, 0 if incorrect."
     )
 
-    return llm_judge(prompt)
+    return await llm_judge(prompt)
 ```
 
 #### Option C: Combined (Recommended for Math)
@@ -172,7 +172,7 @@ from math_verify import LatexExtractionConfig, parse, verify
 from rnow.core import RewardArgs, get_response, llm_judge, reward
 
 @reward(timeout=120)
-def accuracy(args: RewardArgs, messages: list) -> float:
+async def accuracy(args: RewardArgs, messages: list) -> float:
     """Verify math with math-verify, fallback to LLM judge."""
     expected = args.metadata["expected_answer"]
     response = get_response(messages)
@@ -192,9 +192,9 @@ def accuracy(args: RewardArgs, messages: list) -> float:
         f"Expected: {expected}\n"
         f"Model: {response}\n\n"
         "Is the model's final answer mathematically equal to expected? "
-        "Ignore formatting. Answer only: Yes or No"
+        "Ignore formatting. Answer 1 if correct, 0 if incorrect."
     )
-    return llm_judge(prompt)
+    return await llm_judge(prompt)
 ```
 
 ### 5. JSON Structure Validation
@@ -318,7 +318,7 @@ async def test_passes(args: RewardArgs, messages: list) -> float:
 Use another LLM to evaluate responses:
 
 ```python
-from rnow.core import llm_judge
+from rnow.core import llm_judge, reward, RewardArgs
 
 @reward
 async def quality_score(args: RewardArgs, messages: list) -> float:
@@ -331,9 +331,9 @@ async def quality_score(args: RewardArgs, messages: list) -> float:
 Question: {question}
 Response: {response}
 
-Return only a number between 0 and 1."""
+Return 1 if good, 0 if bad."""
 
-    return llm_judge(prompt, secrets=args.secrets)
+    return await llm_judge(prompt, secrets=args.secrets)
 ```
 
 ### LLM Judge with Custom Schema
@@ -360,11 +360,11 @@ async def detailed_evaluation(args: RewardArgs, messages: list) -> float:
 Rate accuracy, clarity, and completeness from 0-10."""
 
     # Returns average of scores normalized to 0-1
-    result = llm_judge(
+    result = await llm_judge(
         prompt,
         secrets=args.secrets,
         schema=custom_schema,
-        model="gpt-5.2-nano"
+        model="gpt-4o-mini"
     )
     return result / 10.0  # Normalize to 0-1
 ```
@@ -374,13 +374,13 @@ Rate accuracy, clarity, and completeness from 0-10."""
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `prompt` | required | Evaluation prompt |
-| `secrets` | None | Dict with API keys |
-| `model` | "gpt-5.2-nano" | Model to use |
+| `secrets` | None | Dict with API keys (checks for OPENAI_API_KEY) |
+| `model` | "gpt-5-nano" | Model to use |
 | `schema` | binary 0/1 | Custom JSON schema |
-| `score_key` | "score" | Field to extract |
+| `score_key` | "score" | Field to extract from response |
 | `temperature` | 0.0 | Sampling temperature |
-| `max_context_window` | 256 | Max response tokens |
-| `timeout` | 30 | Request timeout |
+| `max_tokens` | 1024 | Max response tokens |
+| `timeout` | 60 | Request timeout in seconds |
 
 ## Combining Multiple Rewards
 
@@ -481,15 +481,15 @@ def my_reward(args: RewardArgs, messages: list) -> float:
 The `llm_judge` function automatically uses `OPENAI_API_KEY` from secrets:
 
 ```python
-from rnow.core import llm_judge
+from rnow.core import llm_judge, reward, RewardArgs
 
 @reward
-def quality(args: RewardArgs, messages: list) -> float:
-    return llm_judge("Is this response helpful? Yes or No")
+async def quality(args: RewardArgs, messages: list) -> float:
+    return await llm_judge("Is this response helpful? Return 1 if yes, 0 if no.")
     # Automatically uses args.secrets["OPENAI_API_KEY"]
 ```
 
 To explicitly pass secrets:
 ```python
-return llm_judge(prompt, secrets=args.secrets)
+return await llm_judge(prompt, secrets=args.secrets)
 ```

@@ -15,4 +15,4 @@ async def accuracy(args: RewardArgs, messages: list) -> float:
         "Answer only: Yes or No"
     )
 
-    return llm_judge(prompt)
+    return await llm_judge(prompt)

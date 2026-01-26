@@ -81,6 +81,7 @@ class RolloutClient:
         temperature: float = 1.0,
         max_turns: int = 1,
         termination_policy: str = "last_tool",
+        max_tool_response: int | None = None,
         debug: bool = False,
         smoke_test: bool = False,
         openai_api_key: str | None = None,
@@ -92,6 +93,7 @@ class RolloutClient:
         self.temperature = temperature
         self.max_turns = max_turns
         self.termination_policy = termination_policy
+        self.max_tool_response = max_tool_response
         self.debug = debug
         self.smoke_test = smoke_test
         self.openai_api_key = openai_api_key
@@ -130,19 +132,47 @@ class RolloutClient:
         spinner_frame = 0
         current_phase = "connecting"  # connecting, streaming
 
-        # Create rollouts directory
+        # Create rollouts directory and find next run number
         rollouts_dir = Path("rollouts")
         rollouts_dir.mkdir(parents=True, exist_ok=True)
 
-        # Track rollout files and conversations (for streaming writes)
+        # Find the next available run number (rollout_1, rollout_2, etc.)
+        existing_runs = [d for d in rollouts_dir.iterdir() if d.is_dir() and d.name.startswith("rollout_")]
+        existing_nums = []
+        for d in existing_runs:
+            try:
+                num = int(d.name.split("_")[1])
+                existing_nums.append(num)
+            except (IndexError, ValueError):
+                pass
+        run_num = max(existing_nums, default=0) + 1
+        run_folder = rollouts_dir / f"rollout_{run_num}"
+        run_folder.mkdir(parents=True, exist_ok=True)
+
+        # Track files and conversations (for streaming writes)
         rollout_files: dict[int, Path] = {}
         rollout_ids: dict[int, str] = {}
+        rollout_metadata: dict[int, dict] = {}  # Store metadata separately
         conversations: dict[int, list] = {}
 
+        # Field order: metadata first, conversation last
+        FIELD_ORDER = [
+            "id", "completed", "success",  # Status
+            "total_reward", "rewards", "errors",  # Rewards
+            "turns", "truncated",  # Rollout info
+            "totalTokens", "promptTokens", "completion",  # Token usage
+            "metadata",  # Entry metadata
+        ]
+
         def write_rollout_file(idx: int, data: dict) -> None:
-            """Write current rollout state to file."""
-            if idx in rollout_files:
-                rollout_files[idx].write_text(json.dumps(data, indent=2))
+            """Write rollout state with metadata at top, conversation at end."""
+            if idx not in rollout_files:
+                return
+            ordered = {k: data[k] for k in FIELD_ORDER if k in data}
+            ordered.update({k: v for k, v in data.items() if k not in ordered and k != "conversation"})
+            if "conversation" in data:
+                ordered["conversation"] = data["conversation"]
+            rollout_files[idx].write_text(json.dumps(ordered, indent=2))
 
         def render_status() -> Text:
             nonlocal spinner_frame
@@ -163,7 +193,7 @@ class RolloutClient:
                     text.append(f"Rollout {i + 1}: ", style=f"bold {TEAL}")
                     text.append("streaming…", style="white")
                     if rid:
-                        text.append(f"  → rollouts/{rid}.json", style="dim")
+                        text.append(f"  → rollouts/rollout_{run_num}/{rid}.json", style="dim")
                     text.append("\n")
                 elif s == "done":
                     result = results_by_index.get(i, {})
@@ -200,7 +230,8 @@ class RolloutClient:
                             )
                             text.append(f"  [{bd}]", style=reward_style)
                     if rid:
-                        text.append(f"  written to rollouts/{rid}.json", style="dim")
+                        text.append(f"  → rollouts/rollout_{run_num}/{rid}.json", style="dim")
+
                     text.append("\n")
 
                     # Show reward errors (e.g., LLM judge failures)
@@ -268,6 +299,9 @@ class RolloutClient:
                 if self.mcp_url:
                     payload["mcp_url"] = self.mcp_url
 
+                if self.max_tool_response is not None:
+                    payload["max_tool_response"] = self.max_tool_response
+
                 # Get streaming URL and payload from Next.js API
                 resp = await self.client.post(
                     f"{self.api_base}/api/rnow/rollout",
@@ -318,16 +352,18 @@ class RolloutClient:
                                 idx = data_json.get("index", 0)
                                 status[idx] = "running"
 
-                                # Generate timestamped filename and create file
-                                timestamp = time.strftime("%Y%m%d_%H%M%S")
-                                short_id = str(uuid.uuid4())[:8]
-                                result_id = f"{timestamp}_{short_id}"
+                                # Generate filename: sample_1.json, sample_2.json, etc.
+                                sample_num = idx + 1
+                                result_id = f"sample_{sample_num}"
                                 rollout_ids[idx] = result_id
-                                rollout_files[idx] = rollouts_dir / f"{result_id}.json"
+                                rollout_files[idx] = run_folder / f"{result_id}.json"
 
                                 # Initialize conversation with initial messages
                                 initial_messages = data_json.get("messages", [])
                                 conversations[idx] = list(initial_messages)
+
+                                # Store metadata from the sample if available
+                                rollout_metadata[idx] = data_json.get("metadata", {})
 
                                 # Write initial state
                                 write_rollout_file(
@@ -335,6 +371,7 @@ class RolloutClient:
                                     {
                                         "id": result_id,
                                         "completed": False,
+                                        "metadata": rollout_metadata[idx],
                                         "conversation": conversations[idx],
                                     },
                                 )
@@ -350,6 +387,7 @@ class RolloutClient:
                                         {
                                             "id": rollout_ids.get(idx, ""),
                                             "completed": False,
+                                            "metadata": rollout_metadata.get(idx, {}),
                                             "conversation": conversations[idx],
                                         },
                                     )
@@ -360,11 +398,10 @@ class RolloutClient:
                                 # Use existing ID or generate new one
                                 result_id = rollout_ids.get(idx)
                                 if not result_id:
-                                    timestamp = time.strftime("%Y%m%d_%H%M%S")
-                                    short_id = str(uuid.uuid4())[:8]
-                                    result_id = f"{timestamp}_{short_id}"
+                                    sample_num = idx + 1
+                                    result_id = f"sample_{sample_num}"
                                     rollout_ids[idx] = result_id
-                                    rollout_files[idx] = rollouts_dir / f"{result_id}.json"
+                                    rollout_files[idx] = run_folder / f"{result_id}.json"
 
                                 data_json["id"] = result_id
                                 # Add completed flag: true for success, "error" for failure
@@ -888,6 +925,7 @@ async def _test_async(
     )
     max_turns = config.rollout.max_turns if config.rollout else 1
     termination_policy = config.rollout.termination_policy if config.rollout else "last_tool"
+    max_tool_response = config.rollout.max_tool_response if config.rollout else None
     mcp_url = config.rollout.mcp_url if config.rollout else None
 
     # Detect model type
@@ -947,6 +985,7 @@ async def _test_async(
             temperature=1.0,
             max_turns=max_turns,
             termination_policy=termination_policy,
+            max_tool_response=max_tool_response,
             debug=debug,
             smoke_test=True,
             openai_api_key=openai_api_key,

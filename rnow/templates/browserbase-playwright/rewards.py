@@ -2,7 +2,7 @@ from rnow.core import RewardArgs, get_response, llm_judge, reward
 
 
 @reward(precondition=True)
-def used_browser(args: RewardArgs, messages: list) -> float:
+async def used_browser(args: RewardArgs, messages: list) -> float:
     """Gate: must use browser tools to get any reward."""
     for msg in messages:
         if msg.get("role") == "assistant":
@@ -15,7 +15,7 @@ def used_browser(args: RewardArgs, messages: list) -> float:
 
 
 @reward(timeout=120)
-def accuracy(args: RewardArgs, messages: list) -> float:
+async def accuracy(args: RewardArgs, messages: list) -> float:
     """LLM judge: check if the response contains the correct answer.
 
     Uses binary scoring with chain-of-thought reasoning.
@@ -54,4 +54,4 @@ CRITERIA FOR INCORRECT (score=0):
 
 Think step by step, then give your verdict."""
 
-    return llm_judge(prompt, secrets=args.secrets)
+    return await llm_judge(prompt, secrets=args.secrets)

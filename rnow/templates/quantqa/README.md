@@ -49,7 +49,7 @@ All training was done in **under 20 lines of code** using the ReinforceNow platf
 
 ```python
 @reward(timeout=120)
-def accuracy(args: RewardArgs, messages: list) -> float:
+async def accuracy(args: RewardArgs, messages: list) -> float:
     """Judge if model's numerical answer matches expected."""
     expected = args.metadata["answer"]
     model_answer = get_response(messages)
@@ -61,7 +61,7 @@ def accuracy(args: RewardArgs, messages: list) -> float:
         "Answer 1 or 0."
     )
 
-    return llm_judge(prompt)
+    return await llm_judge(prompt)
 ```
 
 ## Dataset Format
