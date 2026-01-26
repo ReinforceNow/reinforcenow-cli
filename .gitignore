@@ -9,7 +9,7 @@ wheels/
 # Virtual environments
 .venv
 
-# Project workspace directory
+# Project workspace directories
 project/
 project2/
 project3/
@@ -17,6 +17,7 @@ project4/
 project5/
 project6/
 project7/
+projects/
 
 # Environment and config
 .DS_Store

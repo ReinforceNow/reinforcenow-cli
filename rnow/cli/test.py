@@ -543,7 +543,7 @@ def test(
 
     resolved_api_url = api_url or ctx.obj.get("api_url", "").replace("/api", "") or DEFAULT_API_URL
 
-    # Get OpenAI API key (may not be needed for tinker models)
+    # Get OpenAI API key (may not be needed for GPU models)
     openai_api_key = os.environ.get("OPENAI_API_KEY")
 
     async def run_with_cancellation():
@@ -827,13 +827,14 @@ async def _test_async(
 
     is_distill = config.dataset_type.value == "distill"
     is_sft = config.dataset_type.value == "sft"
+    is_midtrain = config.dataset_type.value == "midtrain"
 
     rewards_path = project_dir / "rewards.py"
     tools_path = project_dir / "tools.py"
     train_path = project_dir / "train.jsonl"
 
-    # rewards.py is required for RL, optional for distillation/SFT
-    if not rewards_path.exists() and not is_distill and not is_sft:
+    # rewards.py is required for RL, optional for distillation/SFT/midtrain
+    if not rewards_path.exists() and not is_distill and not is_sft and not is_midtrain:
         raise click.ClickException("rewards.py not found in project directory")
     if not train_path.exists():
         raise click.ClickException("train.jsonl not found in project directory")
@@ -967,11 +968,11 @@ async def _test_async(
             f"Model: {click.style(model_name, fg=TEAL_RGB)} {click.style('(OpenAI API)', dim=True)}"
         )
 
-    # Note for distillation/SFT mode
-    if is_distill or is_sft:
+    # Note for distillation/SFT/midtrain mode
+    if is_distill or is_sft or is_midtrain:
         click.echo(
             click.style("Note: ", dim=True)
-            + "SFT/Distillation test only runs rollouts (no rewards)"
+            + "SFT/Distillation/Midtrain test only runs rollouts (no rewards)"
         )
     click.echo()
 

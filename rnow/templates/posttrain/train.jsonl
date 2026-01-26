@@ -1,0 +1,3 @@
+{"text": "Problem: Find the value of x in the equation 2x + 5 = 13.\n\nSolution: To solve for x, we subtract 5 from both sides: 2x = 8. Then divide both sides by 2: x = 4."}
+{"text": "Problem: Calculate the derivative of f(x) = x^3 + 2x^2 - 5x + 1.\n\nSolution: Using the power rule, f'(x) = 3x^2 + 4x - 5."}
+{"text": "Problem: A triangle has sides of length 3, 4, and 5. What is its area?\n\nSolution: This is a right triangle (3^2 + 4^2 = 5^2). The area is (1/2) * base * height = (1/2) * 3 * 4 = 6 square units."}
