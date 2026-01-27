@@ -12,18 +12,22 @@ allowed-tools: Read, Edit, Write, Bash, Grep, Glob
 
 ## Critical: Modal Sandbox Behavior
 
-**Modal sandboxes run `sleep infinity` and IGNORE Docker ENTRYPOINT/CMD.**
+**ReinforceNow runs `/start.sh sleep infinity` for all sandbox images.**
 
-This means if your Dockerfile has:
-```dockerfile
-ENTRYPOINT ["node", "server.js", "--port", "8931"]
-```
+Modal ignores Docker ENTRYPOINT/CMD, so we explicitly run `/start.sh sleep infinity`. Your Dockerfile must define `/start.sh` to initialize the container.
 
-Modal will NOT run this. It runs `sleep infinity` instead, keeping the container alive but never starting your server.
+At termination, ReinforceNow automatically runs `/terminate.sh` (if it exists) before killing the sandbox.
 
-### The Fix: Wrapper Script Pattern
+### Required Scripts
 
-Create an entrypoint script that starts your service in the background when ANY command runs:
+| Script | When Called | Purpose |
+|--------|-------------|---------|
+| `/start.sh` | Container startup | Initialize services, acquire resources |
+| `/terminate.sh` | Before termination | Release resources, cleanup |
+
+### The /start.sh Pattern
+
+Create `/start.sh` that initializes your service then runs the passed command:
 
 ```dockerfile
 FROM some-image:latest
@@ -32,24 +36,31 @@ EXPOSE 8931
 
 USER root
 
-# This script runs BEFORE whatever command Modal passes (sleep infinity)
-# 1. Starts your service in background
-# 2. Waits for it to be ready
-# 3. Runs the original command (sleep infinity)
+# /start.sh: Called at container startup with "sleep infinity" as args
+# 1. Initialize your service (acquire resources, start servers)
+# 2. exec "$@" runs "sleep infinity" to keep container alive
 RUN echo '#!/bin/bash' > /start.sh && \
+    echo 'set -e' >> /start.sh && \
     echo 'your-server-command --port 8931 &' >> /start.sh && \
     echo 'sleep 3' >> /start.sh && \
     echo 'exec "$@"' >> /start.sh && \
     chmod +x /start.sh
 
+# /terminate.sh: Called automatically before sandbox termination
+RUN echo '#!/bin/bash' > /terminate.sh && \
+    echo 'echo "Cleaning up..."' >> /terminate.sh && \
+    echo '# YOUR CLEANUP CODE HERE' >> /terminate.sh && \
+    chmod +x /terminate.sh
+
 ENTRYPOINT ["/start.sh"]
+CMD ["sleep", "infinity"]
 ```
 
-When Modal runs `sleep infinity`:
-1. `/start.sh` starts your server in background
-2. Waits 3 seconds for server to be ready
-3. Runs `sleep infinity` to keep container alive
-4. Your server is now accessible on port 8931
+When ReinforceNow runs `/start.sh sleep infinity`:
+1. `/start.sh` initializes your service
+2. `exec "$@"` runs `sleep infinity` to keep container alive
+3. Tools execute against your service
+4. On termination: `/terminate.sh` runs automatically, then container killed
 
 ## Key Rules
 

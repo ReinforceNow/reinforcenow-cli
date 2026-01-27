@@ -228,14 +228,39 @@ rnow test [OPTIONS]
 | `-d, --dir PATH` | . | Project directory |
 | `-n, --num-rollouts N` | 1 | Number of rollouts |
 | `--entry INDICES` | random | Test specific entries (e.g., "0,2,5") |
-| `--model MODEL` | config | Override model for testing |
+| `--model MODEL` | gpt-5-nano | Override model for testing |
+
+### Available Models
+
+**OpenAI API models (default, fast):**
+- `gpt-5-nano` - Fastest, recommended for quick testing
+- `gpt-5-mini` - Faster
+- `gpt-5.2` - Balanced
+- `gpt-5-pro` - Highest quality
+
+**GPU models (slower, uses actual training infrastructure):**
+
+Text models:
+- `Qwen/Qwen3-8B`
+- `Qwen/Qwen3-32B`
+- `Qwen/Qwen3-30B-A3B`
+- `Qwen/Qwen3-235B-A22B-Instruct-2507`
+- `meta-llama/Llama-3.1-8B-Instruct`
+- `meta-llama/Llama-3.3-70B-Instruct`
+- `deepseek-ai/DeepSeek-V3.1`
+
+**VLM models (for vision tasks with screenshots):**
+- `Qwen/Qwen3-VL-30B-A3B-Instruct` - Vision-language model
+- `Qwen/Qwen3-VL-235B-A22B-Instruct` - Larger VLM
+
+> **Important:** Default `gpt-5-nano` is text-only and cannot process images. For VLM projects that return screenshots (e.g., browser agents), use `--model Qwen/Qwen3-VL-30B-A3B-Instruct` to test with actual vision capabilities.
 
 ### Examples
 
 **Basic test:**
 ```bash
 rnow test
-# Runs 1 rollout, shows reward breakdown
+# Runs 1 rollout with gpt-5-nano (text-only)
 ```
 
 **Multiple rollouts:**
@@ -249,10 +274,16 @@ rnow test --entry 0,3,7
 # Tests entries at indices 0, 3, and 7 from train.jsonl
 ```
 
-**Override model:**
+**Test with VLM model (for vision/screenshot projects):**
 ```bash
-rnow test --model gpt-5-nano -n 3
-# Uses gpt-5-nano instead of config.model.path
+rnow test --model Qwen/Qwen3-VL-30B-A3B-Instruct -n 1
+# Uses actual VLM that can see images
+```
+
+**Test with GPU model:**
+```bash
+rnow test --model Qwen/Qwen3-8B -n 3
+# Uses GPU infrastructure instead of OpenAI API
 ```
 
 ### Test Output

@@ -35,7 +35,7 @@ async def llm_judge(
     model: str = "gpt-5-nano",
     temperature: float = 0.0,
     max_tokens: int = 1024,
-    timeout: int = 60,
+    timeout: int = 520,
     schema: dict | None = None,
     score_key: str = "score",
     **kwargs: Any,
@@ -88,9 +88,7 @@ async def llm_judge(
             )
             return score / 10.0  # Normalize to 0-1
     """
-    url = api_url or os.environ.get(
-        "LLM_JUDGE_API_URL", "https://api.openai.com/v1/responses"
-    )
+    url = api_url or os.environ.get("LLM_JUDGE_API_URL", "https://api.openai.com/v1/responses")
 
     # Resolve API key: explicit > secrets dict > env vars
     key = api_key
@@ -127,15 +125,17 @@ async def llm_judge(
     if not model.startswith("gpt-5"):
         payload["temperature"] = temperature
 
-    async with aiohttp.ClientSession() as session:
-        async with session.post(
+    async with (
+        aiohttp.ClientSession() as session,
+        session.post(
             url,
             headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
             json=payload,
             timeout=aiohttp.ClientTimeout(total=timeout),
-        ) as resp:
-            resp.raise_for_status()
-            data = await resp.json()
+        ) as resp,
+    ):
+        resp.raise_for_status()
+        data = await resp.json()
 
     return _parse_structured_response(data, score_key)
 

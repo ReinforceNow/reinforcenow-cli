@@ -1,0 +1,29 @@
+project_id: ""
+project_name: "MedBrowse VLM Agent"
+dataset_id: ""
+dataset_name: "medbrowsecomp"
+dataset_type: rl
+organization_id: ""
+data:
+  train_file: train.jsonl
+  batch_size: 8
+  group_size: 4
+model:
+  path: Qwen/Qwen3-VL-30B-A3B-Instruct
+  qlora_rank: 32
+  name: "MedBrowse VLM Agent"
+  description: "Vision-language medical research agent using Kernel cloud browsers for FDA/clinical data lookup"
+algorithm:
+  loss_fn: ppo
+  adv_estimator: grpo
+  kl_penalty_coef: 0.01
+rollout:
+  max_turns: 15
+  max_context_window: 32768
+  termination_policy: last_tool
+  tool_timeout: 30
+trainer:
+  num_epochs: 3
+  learning_rate: 0.0001
+  save_step: 50
+  eval_step: 50

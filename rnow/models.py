@@ -80,13 +80,22 @@ def get_response(messages: list) -> str:
     Only returns "text" type parts - thinking/reasoning is excluded to avoid
     intermediate \\boxed{} expressions confusing parsers like math-verify.
 
+    Note: This finds the LAST assistant message, skipping any trailing tool messages.
+    This is important for agentic workflows where tool results follow assistant messages.
+
     Example:
         @reward
         def my_reward(args: RewardArgs, messages: list) -> float:
             response = get_response(messages)
             return 1.0 if "answer" in response else 0.0
     """
-    content = messages[-1].get("content", "") if messages else ""
+    # Find the last assistant message (skip trailing tool messages)
+    content = ""
+    for msg in reversed(messages):
+        if msg.get("role") == "assistant":
+            content = msg.get("content", "")
+            break
+
     if isinstance(content, list):
         # ContentPart format: [{type: "thinking", thinking: "..."}, {type: "text", text: "..."}]
         # Only extract "text" type parts - skip "thinking" parts which contain intermediate reasoning
@@ -422,6 +431,11 @@ class RolloutConfig(BaseModel):
     include_thinking: bool = Field(
         default=False,
         description="Whether to include <think>...</think> blocks in messages passed to reward functions. Default is False (thinking is stripped).",
+    )
+    rollout_timeout: int | None = Field(
+        default=None,
+        gt=0,
+        description="Maximum time in seconds for a single rollout. If exceeded, rollout is marked as timed out with 0 rewards. Default None (no timeout).",
     )
 
 

@@ -1,0 +1,37 @@
+# Kernel VLM Agent - Browser pool mode
+FROM python:3.11-slim
+
+RUN apt-get update && apt-get install -y curl jq && rm -rf /var/lib/apt/lists/*
+RUN pip install --no-cache-dir requests rnow
+
+ENV KERNEL_POOL_NAME=rnow-browsers
+
+# Startup: acquire browser from pool (waits up to 5 min for available browser)
+RUN printf '#!/bin/bash\n\
+set -e\n\
+echo "Acquiring browser from pool $KERNEL_POOL_NAME..."\n\
+RESP=$(curl -sS --max-time 300 -X POST "https://api.onkernel.com/browser_pools/$KERNEL_POOL_NAME/acquire" \
+  -H "Authorization: Bearer $KERNEL_API_KEY" \
+  -H "Content-Type: application/json" -d "{}")\n\
+SESSION_ID=$(echo "$RESP" | jq -r ".session_id")\n\
+if [ -z "$SESSION_ID" ] || [ "$SESSION_ID" = "null" ]; then\n\
+  echo "Failed to acquire browser: $RESP"\n\
+  exit 1\n\
+fi\n\
+echo "$SESSION_ID" > /tmp/kernel_session_id\n\
+echo "Browser ready: $SESSION_ID"\n\
+exec "$@"\n' > /start.sh && chmod +x /start.sh
+
+# Cleanup: release browser back to pool
+RUN printf '#!/bin/bash\n\
+if [ -f /tmp/kernel_session_id ]; then\n\
+  SESSION_ID=$(cat /tmp/kernel_session_id)\n\
+  echo "Releasing browser $SESSION_ID..."\n\
+  curl -sS --max-time 10 -X POST "https://api.onkernel.com/browser_pools/$KERNEL_POOL_NAME/release" \
+    -H "Authorization: Bearer $KERNEL_API_KEY" \
+    -H "Content-Type: application/json" \
+    -d "{\"session_id\": \"$SESSION_ID\", \"reuse\": false}" || true\n\
+fi\n' > /terminate.sh && chmod +x /terminate.sh
+
+ENTRYPOINT ["/start.sh"]
+CMD ["sleep", "infinity"]
