@@ -135,33 +135,32 @@ docker run --rm test:latest python -c "from tools import browse; print(browse('h
 
 **Fix:** Add `--allowed-hosts '*'` (or `--allowed-hosts "*"` in shell scripts) to allow external connections.
 
-### Example: Playwright MCP with Browserbase CDP
+### Example: Kernel Browser with Replay
 
 ```dockerfile
-FROM node:20-slim
-WORKDIR /app
+FROM python:3.11-slim
 RUN apt-get update && apt-get install -y curl jq && rm -rf /var/lib/apt/lists/*
-RUN npm install -g @playwright/mcp
-EXPOSE 8931
+RUN pip install --no-cache-dir requests rnow
 
-# Creates Browserbase session, passes CDP endpoint to Playwright MCP
+# Creates Kernel browser session and starts replay recording
 RUN echo '#!/bin/bash' > /start.sh && \
     echo 'set -e' >> /start.sh && \
-    echo 'RESPONSE=$(curl -s -X POST "https://api.browserbase.com/v1/sessions" -H "X-BB-API-Key: $BROWSERBASE_API_KEY" -H "Content-Type: application/json" -d "{\"projectId\": \"$BROWSERBASE_PROJECT_ID\"}")' >> /start.sh && \
-    echo 'SESSION_ID=$(echo "$RESPONSE" | jq -r ".id")' >> /start.sh && \
-    echo 'CDP="wss://connect.browserbase.com?apiKey=$BROWSERBASE_API_KEY&sessionId=$SESSION_ID"' >> /start.sh && \
-    echo 'cleanup() { curl -s -X POST "https://api.browserbase.com/v1/sessions/$SESSION_ID" -H "X-BB-API-Key: $BROWSERBASE_API_KEY" -H "Content-Type: application/json" -d "{\"status\":\"REQUEST_RELEASE\"}" || true; }' >> /start.sh && \
-    echo 'trap cleanup EXIT SIGTERM SIGINT' >> /start.sh && \
-    echo 'npx @playwright/mcp --port 8931 --host 0.0.0.0 --allowed-hosts "*" --cdp-endpoint "$CDP" &' >> /start.sh && \
-    echo 'sleep 3' >> /start.sh && \
+    echo 'RESP=$(curl -sS --max-time 60 -X POST "https://api.onkernel.com/browsers" -H "Authorization: Bearer $KERNEL_API_KEY" -H "Content-Type: application/json" -d "{\"timeout_seconds\": 300, \"headless\": false, \"viewport\": {\"width\": 1024, \"height\": 768}}")' >> /start.sh && \
+    echo 'SESSION_ID=$(echo "$RESP" | jq -r ".session_id")' >> /start.sh && \
+    echo 'echo "$SESSION_ID" > /tmp/kernel_session_id' >> /start.sh && \
+    echo 'curl -sS -X POST "https://api.onkernel.com/browsers/$SESSION_ID/replays" -H "Authorization: Bearer $KERNEL_API_KEY" -H "Content-Type: application/json" -d "{}" || true' >> /start.sh && \
     echo 'exec "$@"' >> /start.sh && \
     chmod +x /start.sh
 
-ENTRYPOINT ["/start.sh"]
-```
+# Cleanup: delete browser session
+RUN echo '#!/bin/bash' > /terminate.sh && \
+    echo 'SESSION_ID=$(cat /tmp/kernel_session_id 2>/dev/null)' >> /terminate.sh && \
+    echo '[ -n "$SESSION_ID" ] && curl -sS --max-time 10 -X DELETE "https://api.onkernel.com/browsers/$SESSION_ID" -H "Authorization: Bearer $KERNEL_API_KEY" || true' >> /terminate.sh && \
+    chmod +x /terminate.sh
 
-**Without `--allowed-hosts "*"`:** Modal tunnel connection gets 403 Forbidden
-**With `--allowed-hosts "*"`:** Connections from any host are accepted
+ENTRYPOINT ["/start.sh"]
+CMD ["sleep", "infinity"]
+```
 
 ## Cleanup with /terminate.sh
 
@@ -207,20 +206,18 @@ RUN chmod +x /terminate.sh
 3. **Use timeouts** on network calls (`--max-time 5`) to avoid hanging
 4. **Handle errors gracefully** (`|| true`) - don't fail the cleanup
 
-### Example: Release Browserbase Session
+### Example: Delete Kernel Browser Session
 
 ```bash
 #!/bin/bash
-# /terminate.sh - releases Browserbase session
+# /terminate.sh - deletes Kernel browser session
 
-if [ -f /tmp/browserbase_session_id ]; then
-  SESSION_ID=$(cat /tmp/browserbase_session_id)
-  echo "Releasing Browserbase session $SESSION_ID..."
-  curl -sS --max-time 5 -X POST \
-    "https://api.browserbase.com/v1/sessions/$SESSION_ID" \
-    -H "X-BB-API-Key: $BROWSERBASE_API_KEY" \
-    -H "Content-Type: application/json" \
-    -d "{\"projectId\":\"$BROWSERBASE_PROJECT_ID\",\"status\":\"REQUEST_RELEASE\"}" || true
+if [ -f /tmp/kernel_session_id ]; then
+  SESSION_ID=$(cat /tmp/kernel_session_id)
+  echo "Deleting Kernel browser $SESSION_ID..."
+  curl -sS --max-time 10 -X DELETE \
+    "https://api.onkernel.com/browsers/$SESSION_ID" \
+    -H "Authorization: Bearer $KERNEL_API_KEY" || true
   echo "Done"
 fi
 ```

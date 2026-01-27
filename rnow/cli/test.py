@@ -16,7 +16,6 @@ import random
 import signal
 import sys
 import time
-import uuid
 from pathlib import Path
 
 import click
@@ -137,7 +136,9 @@ class RolloutClient:
         rollouts_dir.mkdir(parents=True, exist_ok=True)
 
         # Find the next available run number (rollout_1, rollout_2, etc.)
-        existing_runs = [d for d in rollouts_dir.iterdir() if d.is_dir() and d.name.startswith("rollout_")]
+        existing_runs = [
+            d for d in rollouts_dir.iterdir() if d.is_dir() and d.name.startswith("rollout_")
+        ]
         existing_nums = []
         for d in existing_runs:
             try:
@@ -157,10 +158,17 @@ class RolloutClient:
 
         # Field order: metadata first, conversation last
         FIELD_ORDER = [
-            "id", "completed", "success",  # Status
-            "total_reward", "rewards", "errors",  # Rewards
-            "turns", "truncated",  # Rollout info
-            "totalTokens", "promptTokens", "completion",  # Token usage
+            "id",
+            "completed",
+            "success",  # Status
+            "total_reward",
+            "rewards",
+            "errors",  # Rewards
+            "turns",
+            "truncated",  # Rollout info
+            "totalTokens",
+            "promptTokens",
+            "completion",  # Token usage
             "metadata",  # Entry metadata
         ]
 
@@ -169,7 +177,9 @@ class RolloutClient:
             if idx not in rollout_files:
                 return
             ordered = {k: data[k] for k in FIELD_ORDER if k in data}
-            ordered.update({k: v for k, v in data.items() if k not in ordered and k != "conversation"})
+            ordered.update(
+                {k: v for k, v in data.items() if k not in ordered and k != "conversation"}
+            )
             if "conversation" in data:
                 ordered["conversation"] = data["conversation"]
             rollout_files[idx].write_text(json.dumps(ordered, indent=2))
@@ -203,9 +213,11 @@ class RolloutClient:
                     reward_errors = result.get("errors", [])
 
                     # Check if any reward returned "error" or "timeout"
-                    has_reward_error = any(
-                        v in ("error", "timeout") for v in breakdown.values()
-                    ) if breakdown else False
+                    has_reward_error = (
+                        any(v in ("error", "timeout") for v in breakdown.values())
+                        if breakdown
+                        else False
+                    )
 
                     text.append(f"Rollout {i + 1}: ", style=f"bold {TEAL}")
 
@@ -707,9 +719,11 @@ def _display_results(
         reward_errors = result.get("errors", [])
 
         # Check if any reward returned "error" or "timeout"
-        has_reward_error = any(
-            v in ("error", "timeout") for v in reward_breakdown.values()
-        ) if reward_breakdown else False
+        has_reward_error = (
+            any(v in ("error", "timeout") for v in reward_breakdown.values())
+            if reward_breakdown
+            else False
+        )
 
         # Handle both float values and string values (like "timeout" or "error")
         reward_str = ", ".join(
@@ -877,7 +891,7 @@ async def _test_async(
         "SECRET",
         "TOKEN",
         "PROJECT_ID",
-        "BROWSERBASE",
+        "KERNEL",
         "OPENAI",
         "GEMINI",
         "HF_",
