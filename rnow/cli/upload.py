@@ -33,8 +33,6 @@ def get_upload_session(
     base_url: str,
     project_id: str,
     project_version_id: str,
-    dataset_id: str,
-    dataset_version_id: str,
     duration: int = 900,
 ) -> dict:
     """
@@ -44,12 +42,10 @@ def get_upload_session(
         base_url: API base URL
         project_id: Project ID
         project_version_id: Project version ID
-        dataset_id: Dataset ID
-        dataset_version_id: Dataset version ID
         duration: Session duration in seconds (default 15 min)
 
     Returns:
-        Upload session with credentials, bucket, region, and prefixes
+        Upload session with credentials, bucket, region, and project prefix
     """
     headers = auth.get_auth_headers()
 
@@ -60,8 +56,6 @@ def get_upload_session(
             json={
                 "projectId": project_id,
                 "projectVersionId": project_version_id,
-                "datasetId": dataset_id,
-                "datasetVersionId": dataset_version_id,
                 "duration": duration,
             },
         )
@@ -122,14 +116,11 @@ def upload_with_boto3(
 
     bucket = session["bucket"]
     project_prefix = session["projectPrefix"]
-    dataset_prefix = session["datasetPrefix"]
 
     def upload_one(item: tuple[str, Path, str]) -> str:
         filename, file_path, prefix_type = item
-        if prefix_type == "dataset":
-            key = f"{dataset_prefix}/{filename}"
-        else:
-            key = f"{project_prefix}/{filename}"
+        # All files go to project prefix now (dataset prefix removed)
+        key = f"{project_prefix}/{filename}"
 
         transfer.upload_file(
             str(file_path),

@@ -1,9 +1,6 @@
 project_id: ""
 project_name: "MedBrowse VLM Agent"
-dataset_id: ""
-dataset_name: "medbrowsecomp"
 dataset_type: rl
-organization_id: ""
 data:
   train_file: train.jsonl
   batch_size: 8

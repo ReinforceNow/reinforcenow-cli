@@ -1,9 +1,6 @@
 project_id: ""
 project_name: "rlvr-project"
-dataset_id: ""
-dataset_name: "train"
 dataset_type: rl
-organization_id: ""
 data:
   train_file: train.jsonl
   batch_size: 32

@@ -1,7 +1,5 @@
 project_id: ""
 project_name: "Posttrain Project"
-dataset_id: ""
-dataset_name: "custom-corpus"
 dataset_type: midtrain
 data:
   train_file: train.jsonl

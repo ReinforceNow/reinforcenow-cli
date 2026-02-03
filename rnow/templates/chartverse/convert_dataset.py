@@ -7,8 +7,18 @@ Usage:
 """
 
 import argparse
+import base64
+import io
 import json
 from pathlib import Path
+
+
+def image_to_base64(img) -> str:
+    """Convert PIL Image to base64 data URI."""
+    buffer = io.BytesIO()
+    img.save(buffer, format="PNG")
+    b64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
+    return f"data:image/png;base64,{b64}"
 
 
 def convert_chartverse(limit: int | None = None):
@@ -24,10 +34,6 @@ def convert_chartverse(limit: int | None = None):
     else:
         print(f"Processing all {len(ds)} samples...")
 
-    # Create images directory
-    images_dir = Path("images")
-    images_dir.mkdir(exist_ok=True)
-
     # Convert to rnow format
     output_file = Path("train.jsonl")
     converted = 0
@@ -36,10 +42,9 @@ def convert_chartverse(limit: int | None = None):
     with open(output_file, "w") as f:
         for i, row in enumerate(ds):
             try:
-                # Save image
+                # Convert image to base64
                 img = row["images"][0]  # PIL Image
-                img_path = images_dir / f"{i:05d}.png"
-                img.save(img_path)
+                image_b64 = image_to_base64(img)
 
                 # Build messages from prompt
                 messages = []
@@ -52,7 +57,7 @@ def convert_chartverse(limit: int | None = None):
                         content = content.strip() + "\n\nProvide your final answer inside \\boxed{}"
 
                     if "<image>" in content:
-                        # Multi-part content with image
+                        # Multi-part content with image (base64 inline)
                         text = content.replace("<image>", "").strip()
                         messages.append(
                             {
@@ -60,7 +65,7 @@ def convert_chartverse(limit: int | None = None):
                                 "content": [
                                     {
                                         "type": "image",
-                                        "image": f"file:///workspace/images/{i:05d}.png",
+                                        "image": image_b64,
                                     },
                                     {"type": "text", "text": text},
                                 ],
@@ -95,7 +100,6 @@ def convert_chartverse(limit: int | None = None):
 
     print(f"\nDone! Converted {converted} samples, {errors} errors")
     print(f"Output: {output_file}")
-    print(f"Images: {images_dir}/")
 
 
 if __name__ == "__main__":

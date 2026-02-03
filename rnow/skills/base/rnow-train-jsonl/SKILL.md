@@ -155,6 +155,73 @@ Provide conversation history for multi-turn training:
 }
 ```
 
+## VLM Images (Vision-Language Models)
+
+For vision-language model training, images must be included as **base64 inline data URIs**. File references are not supported.
+
+### Image Format
+
+Images use multimodal content with `type: "image"`:
+
+```json
+{
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {"type": "image", "image": "data:image/png;base64,iVBORw0KGgo..."},
+        {"type": "text", "text": "What's in this image?"}
+      ]
+    }
+  ],
+  "rewards": ["accuracy"]
+}
+```
+
+### Converting Images to Base64
+
+When preparing datasets, convert PIL images to base64:
+
+```python
+import base64
+import io
+
+def image_to_base64(img) -> str:
+    """Convert PIL Image to base64 data URI."""
+    buffer = io.BytesIO()
+    img.save(buffer, format="PNG")
+    b64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
+    return f"data:image/png;base64,{b64}"
+
+# Usage with HuggingFace datasets
+from datasets import load_dataset
+ds = load_dataset("dataset_name", split="train")
+
+for row in ds:
+    img = row["image"]  # PIL Image
+    image_b64 = image_to_base64(img)
+
+    entry = {
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image", "image": image_b64},
+                    {"type": "text", "text": "Describe this image"}
+                ]
+            }
+        ],
+        "rewards": ["quality"]
+    }
+```
+
+### Supported Formats
+
+- `data:image/png;base64,...`
+- `data:image/jpeg;base64,...`
+- `data:image/webp;base64,...`
+- `data:image/gif;base64,...`
+
 ## Validation Rules
 
 1. **Rewards must exist** - Names in `rewards` must match `@reward` functions in rewards.py

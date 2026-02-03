@@ -1,9 +1,6 @@
 project_id: ""
 project_name: "SimpleQA - Factual QA Agent"
-dataset_id: ""
-dataset_name: "simpleqa"
 dataset_type: rl
-organization_id: ""
 data:
   train_file: train.jsonl
   batch_size: 32

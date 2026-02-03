@@ -2,10 +2,19 @@
 """Download FoodExtract-1k dataset: python setup.py --samples 100"""
 
 import argparse
+import base64
+import io
 import json
-from pathlib import Path
 
 PROMPT = 'Extract food and drink items from this image. Respond with JSON: {"is_food": 0|1, "food_items": [...], "drink_items": [...]}'
+
+
+def image_to_base64(img) -> str:
+    """Convert PIL Image to base64 data URI."""
+    buffer = io.BytesIO()
+    img.save(buffer, format="PNG")
+    b64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
+    return f"data:image/png;base64,{b64}"
 
 
 def main():
@@ -18,18 +27,14 @@ def main():
     print(f"Loading {args.samples} samples from FoodExtract-1k...")
     ds = load_dataset("mrdbourke/FoodExtract-1k-Vision", split=f"train[:{args.samples}]")
 
-    Path("images").mkdir(exist_ok=True)
     data = []
 
     for i, s in enumerate(ds):
         print(f"{i+1}/{args.samples}")
 
-        # Save image locally, use file:// URI for trainer workspace
+        # Convert image to base64 inline
         img = s["image"]
-        local_path = f"images/{i:05d}.png"
-        img.save(local_path)
-        # Trainer extracts images.tar to /workspace/images/
-        image_uri = f"file:///workspace/{local_path}"
+        image_b64 = image_to_base64(img)
 
         # Get labels
         label = s["output_label_json"]
@@ -44,7 +49,7 @@ def main():
                     {
                         "role": "user",
                         "content": [
-                            {"type": "image", "image": image_uri},
+                            {"type": "image", "image": image_b64},
                             {"type": "text", "text": "What food and drinks are in this image?"},
                         ],
                     },

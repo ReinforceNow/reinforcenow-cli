@@ -448,6 +448,11 @@ class TrainerConfig(BaseModel):
     learning_rate: float = Field(default=0.0001, gt=0)
     save_step: int = Field(default=-1, ge=-1)  # -1 = end only, 0 = never save, N = every N steps
     eval_step: int = Field(default=0, ge=0)  # Evaluate every N steps (0 = end of epoch only)
+    max_billing: float | None = Field(
+        default=None,
+        gt=0,
+        description="Maximum billing in dollars for this run. Training stops when this limit is reached. Default None (no limit).",
+    )
 
 
 class ProjectConfig(BaseModel):
@@ -458,8 +463,6 @@ class ProjectConfig(BaseModel):
     project_id: str = Field(default="")
     project_name: str = Field(default="")
     description: str | None = None  # Optional project description
-    dataset_id: str = Field(default="")
-    dataset_name: str | None = None
     dataset_type: DatasetType = Field(...)
     organization_id: str | None = None
 

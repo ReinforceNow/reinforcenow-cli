@@ -95,12 +95,10 @@ trainer:
 ### Full RL Config (All Options)
 
 ```yaml
-# Project identification (auto-filled on first run)
+# Project identification (auto-filled by rnow init)
 project_id: ""
 project_name: "My RL Project"
-dataset_id: ""
 dataset_type: rl
-organization_id: ""
 description: "Training description"
 
 # Data configuration

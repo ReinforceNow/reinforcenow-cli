@@ -73,7 +73,7 @@ def upload_file_to_blob(base_url: str, local_path: Path, blob_pathname: str) -> 
 def maybe_upload_to_blob(
     base_url: str,
     file_path: Path,
-    dataset_id: str,
+    project_id: str,
 ) -> tuple[str | None, dict | None]:
     """
     Check if file needs blob upload and handle it.
@@ -92,7 +92,7 @@ def maybe_upload_to_blob(
     # Large file - upload to blob
     import uuid
 
-    blob_pathname = f"datasets/{dataset_id}/{uuid.uuid4().hex[:8]}-{file_path.name}"
+    blob_pathname = f"projects/{project_id}/{uuid.uuid4().hex[:8]}-{file_path.name}"
 
     blob = upload_file_to_blob(base_url, file_path, blob_pathname)
     return None, blob
