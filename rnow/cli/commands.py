@@ -2480,7 +2480,7 @@ def run(
         base_model_display = None
 
     # Output completion messages below the cube
-    click.echo(f"Run started successfully {click.style('✅', fg=TEAL_RGB)}")
+    click.echo(click.style("Run started", fg=TEAL_RGB, bold=True))
     click.echo(f"  Project: {config.project_name}")
     click.echo(f"  Model: {model_display}")
     if base_model_display:
