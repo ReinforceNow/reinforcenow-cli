@@ -291,6 +291,7 @@ async def _eval_async(
     termination_policy = config.rollout.termination_policy if config.rollout else "last_tool"
     max_tool_response = config.rollout.max_tool_response if config.rollout else None
     mcp_url = config.rollout.mcp_url if config.rollout else None
+    reasoning_mode = config.rollout.reasoning_mode if config.rollout else None
 
     # Build metrics string for display
     metrics_str = []
@@ -393,6 +394,7 @@ async def _eval_async(
                     "termination_policy": termination_policy,
                     "max_tool_response": max_tool_response,
                     "mcp_url": mcp_url,
+                    "reasoning_mode": reasoning_mode,
                     "use_gpu": use_gpu,
                 },
             )

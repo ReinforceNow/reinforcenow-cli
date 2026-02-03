@@ -127,7 +127,7 @@ rollout:
   max_turns: 1                  # Max conversation turns
   max_context_window: 2048              # Max tokens per generation
   termination_policy: last_tool # 'last_tool' or 'max_turns'
-  thinking_mode: null           # null, 'disabled', 'easy', 'medium', 'hard'
+  reasoning_mode: null          # null, 'disabled', 'low', 'medium', 'high'
   mcp_url: null                 # MCP server URL(s)
   tool_timeout: 60              # Tool execution timeout
   max_context_window: 32768    # Max context window in tokens (tool results auto-truncated)
@@ -248,7 +248,7 @@ teacher:
 | `max_turns` | 1 | Max conversation turns |
 | `max_context_window` | 2048 | Max tokens per generation |
 | `termination_policy` | last_tool | When to end episode |
-| `thinking_mode` | null | Chain-of-thought mode |
+| `reasoning_mode` | null | Chain-of-thought mode |
 | `mcp_url` | null | MCP server URL(s) |
 | `tool_timeout` | 60 | Tool execution timeout |
 | `max_context_window` | 32768 | Max context window in tokens |
@@ -261,7 +261,7 @@ teacher:
 | `last_tool` | Episode ends when model responds without tool call |
 | `max_turns` | Episode always runs for exactly max_turns |
 
-#### Thinking Mode (Reasoning Models)
+#### Reasoning Mode
 
 For models that support chain-of-thought (`<think>` tags):
 
@@ -269,9 +269,9 @@ For models that support chain-of-thought (`<think>` tags):
 |------|-------------|
 | `null` | Auto-enable for supported models |
 | `disabled` | Explicitly disable reasoning |
-| `easy` | Light reasoning |
+| `low` | Light reasoning |
 | `medium` | Moderate reasoning |
-| `hard` | Deep reasoning (more tokens) |
+| `high` | Deep reasoning (more tokens) |
 
 **Important**: Reasoning models need higher `max_context_window` (8192-16384).
 
@@ -479,7 +479,7 @@ algorithm:
 rollout:
   max_turns: 1
   max_context_window: 8192  # High for reasoning
-  thinking_mode: medium
+  reasoning_mode: medium
 
 trainer:
   num_epochs: 20

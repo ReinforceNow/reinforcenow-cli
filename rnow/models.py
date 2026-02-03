@@ -411,8 +411,12 @@ class RolloutConfig(BaseModel):
         description="Maximum context window in tokens. Rollouts are marked as truncated if conversation exceeds this. Default 32768 (32k).",
     )
     termination_policy: Literal["max_turns", "last_tool"] = "last_tool"
-    thinking_mode: Literal["disabled", "easy", "medium", "hard"] | None = (
-        None  # None = model default
+    reasoning_mode: Literal["disabled", "low", "medium", "high"] | None = Field(
+        default=None,
+        description="Reasoning mode for models that support it. Controls chain-of-thought reasoning. "
+        "Values: 'disabled' (no reasoning), 'low', 'medium', 'high'. Default None (model default). "
+        "For GPU models (gpt-oss, Qwen3, DeepSeek): controls thinking/reasoning effort. "
+        "For OpenAI API (GPT-5): maps to reasoning effort parameter.",
     )
     mcp_url: str | list[str] | None = Field(
         default=None,

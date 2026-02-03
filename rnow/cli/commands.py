@@ -729,19 +729,19 @@ def validate_requirements_txt(path: Path, target_python: str = "3.11") -> list[s
     return errors
 
 
-def get_thinking_mode_display(config: models.ProjectConfig) -> str:
-    """Get a human-readable display string for the thinking mode."""
-    thinking_mode = config.rollout.thinking_mode if config.rollout else None
+def get_reasoning_mode_display(config: models.ProjectConfig) -> str:
+    """Get a human-readable display string for the reasoning mode."""
+    reasoning_mode = config.rollout.reasoning_mode if config.rollout else None
     model = config.model.path
 
     # GPT-OSS: Reasoning models with levels
     if model in ["openai/gpt-oss-120b", "openai/gpt-oss-20b"]:
         mode_map = {
             "disabled": "Reasoning Off",
-            "easy": "Reasoning Low",
-            "hard": "Reasoning High",
+            "low": "Reasoning Low",
+            "high": "Reasoning High",
         }
-        return mode_map.get(thinking_mode, "Reasoning Medium")
+        return mode_map.get(reasoning_mode, "Reasoning Medium")
 
     # Hybrid models: Qwen3, DeepSeek
     if model in [
@@ -753,7 +753,7 @@ def get_thinking_mode_display(config: models.ProjectConfig) -> str:
         "deepseek-ai/DeepSeek-V3.1",
         "deepseek-ai/DeepSeek-V3.1-Base",
     ]:
-        if thinking_mode == "disabled":
+        if reasoning_mode == "disabled":
             return "Reasoning Off"
         else:
             return "Reasoning On"
@@ -778,6 +778,10 @@ def get_thinking_mode_display(config: models.ProjectConfig) -> str:
         return "Reasoning Off"
 
     return "Reasoning Off"
+
+
+# Backwards compatibility alias
+get_thinking_mode_display = get_reasoning_mode_display
 
 
 # Simple session for API calls
@@ -1830,7 +1834,7 @@ def run(
         algorithm.loss_fn            Loss function: ppo, importance_sampling
         rollout.max_turns            Max conversation turns for RL
         rollout.max_context_window   Max context window (default: 32768)
-        rollout.thinking_mode   Reasoning mode: disabled, easy, medium, hard
+        rollout.reasoning_mode   Reasoning mode: disabled, low, medium, high
 
     Multi-model training:
         If model.path is a list in config.yml, a separate run will be submitted
@@ -2462,17 +2466,17 @@ def run(
 
     # Get display values
     model_path = config.model.path if config.model else "Qwen/Qwen3-8B"
-    thinking_mode = get_thinking_mode_display(config)
+    reasoning_mode_display = get_reasoning_mode_display(config)
 
     # Build model display string
-    thinking_styled = click.style(thinking_mode, fg=TEAL_RGB)
+    reasoning_styled = click.style(reasoning_mode_display, fg=TEAL_RGB)
     if resolved_finetuned_model and resolved_base_model:
         # Resuming from a finetuned model - show both
-        model_display = f"{resolved_finetuned_model} ({thinking_styled})"
+        model_display = f"{resolved_finetuned_model} ({reasoning_styled})"
         base_model_display = f"  Base: {resolved_base_model}"
     else:
         # Fresh training from base model
-        model_display = f"{model_path} ({thinking_styled})"
+        model_display = f"{model_path} ({reasoning_styled})"
         base_model_display = None
 
     # Output completion messages below the cube
