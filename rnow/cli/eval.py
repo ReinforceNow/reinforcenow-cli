@@ -405,6 +405,31 @@ async def _eval_async(
                 try:
                     error_data = response.json()
                     error_text = error_data.get("error", error_text)
+                    # Check for organization mismatch error
+                    if error_data.get("code") == "ORG_MISMATCH":
+                        click.echo()
+                        click.echo(
+                            click.style("Error: ", fg="red", bold=True)
+                            + "This model belongs to a different organization."
+                        )
+                        click.echo()
+                        click.echo("To fix this:")
+                        click.echo(
+                            "  1. Go to "
+                            + click.style("https://www.reinforcenow.ai/settings", fg=TEAL_RGB)
+                        )
+                        click.echo("  2. Switch to the organization that owns this model")
+                        click.echo(
+                            "  3. Run "
+                            + click.style("rnow login", fg=TEAL_RGB)
+                            + " again to refresh your session"
+                        )
+                        click.echo("  4. Then retry this command")
+                        raise SystemExit(1)
+                except click.ClickException:
+                    raise
+                except SystemExit:
+                    raise
                 except Exception:
                     pass
                 raise click.ClickException(f"Failed to start evaluation: {error_text}")

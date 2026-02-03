@@ -1735,6 +1735,27 @@ def _submit_single_run(
         tmp_config_path.unlink(missing_ok=True)
 
     if error_msg:
+        # Check for organization mismatch error (model belongs to different org)
+        if "ORG_MISMATCH" in error_msg:
+            click.echo()
+            click.echo(
+                click.style("Error: ", fg="red", bold=True)
+                + "This model belongs to a different organization."
+            )
+            click.echo()
+            click.echo("To fix this:")
+            click.echo(
+                "  1. Go to " + click.style("https://www.reinforcenow.ai/settings", fg=TEAL_RGB)
+            )
+            click.echo("  2. Switch to the organization that owns this model")
+            click.echo(
+                "  3. Run "
+                + click.style("rnow login", fg=TEAL_RGB)
+                + " again to refresh your session"
+            )
+            click.echo("  4. Then retry this command")
+            raise SystemExit(1)
+
         # Add helpful hint for organization access errors
         if "organization" in error_msg.lower():
             click.echo()
@@ -2444,6 +2465,28 @@ def run(
     # Show result
     if error_msg:
         spinner.stop()  # Clear cube on error
+
+        # Check for organization mismatch error (model belongs to different org)
+        if "ORG_MISMATCH" in error_msg:
+            click.echo()
+            click.echo(
+                click.style("Error: ", fg="red", bold=True)
+                + "This model belongs to a different organization."
+            )
+            click.echo()
+            click.echo("To fix this:")
+            click.echo(
+                "  1. Go to " + click.style("https://www.reinforcenow.ai/settings", fg=TEAL_RGB)
+            )
+            click.echo("  2. Switch to the organization that owns this model")
+            click.echo(
+                "  3. Run "
+                + click.style("rnow login", fg=TEAL_RGB)
+                + " again to refresh your session"
+            )
+            click.echo("  4. Then retry this command")
+            raise SystemExit(1)
+
         click.echo(click.style(f"✗ {error_msg}", fg="red", bold=True))
         # Add helpful hint for organization access errors
         if "organization" in error_msg.lower():

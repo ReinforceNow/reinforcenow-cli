@@ -1062,6 +1062,29 @@ async def _test_async(
             )
         except asyncio.CancelledError:
             batch_results = []
+        except httpx.HTTPStatusError as e:
+            # Check for organization mismatch error
+            try:
+                error_data = e.response.json()
+                if error_data.get("code") == "ORG_MISMATCH":
+                    click.echo()
+                    click.echo(
+                        click.style("Error: ", fg="red", bold=True)
+                        + "This model belongs to a different organization."
+                    )
+                    click.echo()
+                    click.echo("To fix this:")
+                    click.echo(
+                        "  1. Run "
+                        + click.style("rnow orgs", fg=TEAL_RGB)
+                        + " to see your organizations"
+                    )
+                    click.echo("  2. Select the organization that owns this model")
+                    click.echo("  3. Then retry this command")
+                    raise SystemExit(1)
+            except (json.JSONDecodeError, KeyError):
+                pass
+            raise
 
         # Check if shutdown was requested
         if _shutdown_requested:
