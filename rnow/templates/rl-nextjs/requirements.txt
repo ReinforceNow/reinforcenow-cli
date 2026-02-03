@@ -1,2 +1,0 @@
-ast-grep-py>=0.29.3
-pydantic>=2.0.0

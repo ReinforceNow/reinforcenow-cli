@@ -1,3 +1,0 @@
-{"text": "This is a sample text chunk for continued pretraining. The model will learn to predict all tokens in this sequence. Domain-specific content helps adapt the model to your use case."}
-{"text": "Another text chunk demonstrating the midtrain format. Unlike SFT which only trains on assistant responses, midtrain trains on every token in your text data."}
-{"text": "You can include technical documentation, code snippets, research papers, or any domain-specific text that you want the model to learn from."}
