@@ -86,6 +86,7 @@ class RolloutClient:
         openai_api_key: str | None = None,
         mcp_url: str | list[str] | None = None,
         reasoning_mode: str | None = None,  # "disabled", "low", "medium", "high"
+        include_thinking: bool = False,  # Whether to include thinking in messages for rewards
     ):
         self.api_base = api_base.rstrip("/")
         self.model = model
@@ -99,6 +100,7 @@ class RolloutClient:
         self.openai_api_key = openai_api_key
         self.mcp_url = mcp_url
         self.reasoning_mode = reasoning_mode
+        self.include_thinking = include_thinking
         self.auth_headers = get_auth_headers()
         self.client = httpx.AsyncClient(timeout=120.0)
         self.total_charged_dollars = 0.0
@@ -318,6 +320,9 @@ class RolloutClient:
 
                 if self.reasoning_mode:
                     payload["reasoning_mode"] = self.reasoning_mode
+
+                if self.include_thinking:
+                    payload["include_thinking"] = self.include_thinking
 
                 # Get streaming URL and payload from Next.js API
                 resp = await self.client.post(
@@ -947,6 +952,7 @@ async def _test_async(
     max_tool_response = config.rollout.max_tool_response if config.rollout else None
     mcp_url = config.rollout.mcp_url if config.rollout else None
     reasoning_mode = config.rollout.reasoning_mode if config.rollout else None
+    include_thinking = config.rollout.include_thinking if config.rollout else False
 
     # Detect model type
     use_gpu = is_gpu_model(model_name)
@@ -1011,6 +1017,7 @@ async def _test_async(
             openai_api_key=openai_api_key,
             mcp_url=mcp_url,
             reasoning_mode=reasoning_mode,
+            include_thinking=include_thinking,
         )
 
         # Select samples for batch rollout

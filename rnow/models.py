@@ -129,7 +129,6 @@ class TrainEntry(BaseModel):
     tools: list[str] | None = None  # Optional: filter which tools are available
     docker: str | None = None  # Optional: Docker image for isolated sandbox
     docker_env: dict[str, str] | None = None  # Optional: Environment variables for sandbox
-    docker_cmd: list[str] | None = None  # Optional: Entrypoint command for sandbox
     metadata: dict | None = None
     variables: dict | None = None
 
@@ -141,9 +140,9 @@ class TrainEntry(BaseModel):
 
     @model_validator(mode="after")
     def validate_docker_fields(self):
-        """Validate that docker_env and docker_cmd require docker to be set."""
-        if (self.docker_env or self.docker_cmd) and not self.docker:
-            raise ValueError("docker_env and docker_cmd require docker field to be set")
+        """Validate that docker_env requires docker to be set."""
+        if self.docker_env and not self.docker:
+            raise ValueError("docker_env requires docker field to be set")
         return self
 
 
@@ -452,11 +451,6 @@ class TrainerConfig(BaseModel):
     learning_rate: float = Field(default=0.0001, gt=0)
     save_step: int = Field(default=-1, ge=-1)  # -1 = end only, 0 = never save, N = every N steps
     eval_step: int = Field(default=0, ge=0)  # Evaluate every N steps (0 = end of epoch only)
-    max_billing: float | None = Field(
-        default=None,
-        gt=0,
-        description="Maximum billing in dollars for this run. Training stops when this limit is reached. Default None (no limit).",
-    )
 
 
 class ProjectConfig(BaseModel):

@@ -19,7 +19,6 @@ One JSON object per line. Each entry is a training example.
 | `tools` | No | Filter which tools are available for this entry |
 | `docker` | If sandbox | Docker image for sandbox execution |
 | `docker_env` | No | Environment variables for sandbox |
-| `docker_cmd` | No | Custom entrypoint command |
 
 ## Message Roles
 
@@ -119,8 +118,7 @@ For entries that need isolated execution (code execution, file operations), use 
   "messages": [{"role": "user", "content": "Analyze the data"}],
   "rewards": ["accuracy"],
   "docker": "myorg/custom-image:latest",
-  "docker_env": {"DEBUG": "true", "DATA_PATH": "/data"},
-  "docker_cmd": ["python", "setup.py", "--init"]
+  "docker_env": {"DEBUG": "true", "DATA_PATH": "/data"}
 }
 ```
 
