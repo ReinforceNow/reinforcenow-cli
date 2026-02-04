@@ -13,8 +13,9 @@ CACHE = "/tmp/skyrl_dbs"
 os.makedirs(CACHE, exist_ok=True)
 
 
-@reward
+@reward(precondition=True)
 def format(args: RewardArgs, messages: list) -> float:
+    """Check format: must have <solution> tag and at least one tool call."""
     response = get_response(messages)
     has_solution = bool(re.search(r"<solution>.*?</solution>", response, re.DOTALL | re.IGNORECASE))
     has_tool_call = any(m.get("role") == "assistant" and m.get("tool_calls") for m in messages)
