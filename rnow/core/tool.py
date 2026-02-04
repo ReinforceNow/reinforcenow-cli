@@ -185,6 +185,10 @@ def _infer_schema(func: Callable) -> dict[str, Any]:
         if param_name in ("self", "cls"):
             continue
 
+        # Skip 'args' parameter (ToolArgs) - it's injected by the system, not provided by model
+        if param_name == "args":
+            continue
+
         # Require type hint for every parameter
         if param_name not in hints:
             raise TypeError(
@@ -503,10 +507,10 @@ def validate_tools_file(filepath) -> list:
                         "Add '-> ReturnType' to the function signature."
                     )
 
-                # Check parameter type annotations (args + kwonlyargs, skip 'self' and 'cls')
+                # Check parameter type annotations (args + kwonlyargs, skip 'self', 'cls', and 'args')
                 all_args = list(node.args.args) + list(node.args.kwonlyargs)
                 for arg in all_args:
-                    if arg.arg in ("self", "cls"):
+                    if arg.arg in ("self", "cls", "args"):
                         continue
                     if arg.annotation is None:
                         errors.append(

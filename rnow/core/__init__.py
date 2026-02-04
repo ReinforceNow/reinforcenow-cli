@@ -8,7 +8,7 @@ Users only need:
 - llm_judge for LLM-as-a-judge evaluation
 """
 
-from rnow.models import RewardArgs, get_response
+from rnow.models import RewardArgs, ToolArgs, get_response
 
 from .llm_judge import llm_judge
 from .reward import (
@@ -26,6 +26,7 @@ __all__ = [
     "reward",
     "tool",
     "RewardArgs",
+    "ToolArgs",
     "get_response",
     "llm_judge",
     # Registries (used by CLI and trainer)

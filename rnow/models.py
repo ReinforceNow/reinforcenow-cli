@@ -73,6 +73,24 @@ class RewardArgs(BaseModel):
         arbitrary_types_allowed = True
 
 
+class ToolArgs(BaseModel):
+    """Arguments passed to tool functions containing context about the sample.
+
+    Example:
+        @tool
+        def sql(args: ToolArgs, query: str) -> str:
+            '''Execute SQL query.'''
+            db_id = args.metadata["db_id"]
+            bucket = os.environ["S3_BUCKET"]  # secrets via os.environ
+            ...
+    """
+
+    metadata: dict = Field(default_factory=dict)
+
+    class Config:
+        arbitrary_types_allowed = True
+
+
 def get_response(messages: list) -> str:
     """Extract text content from the last assistant message.
 
