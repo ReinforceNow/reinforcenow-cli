@@ -1,0 +1,21 @@
+project_name: "SkyRL-SQL"
+dataset_type: rl
+
+data:
+  train_file: train.jsonl
+  batch_size: 8
+  group_size: 8
+
+model:
+  path: Qwen/Qwen3-8B
+  qlora_rank: 64
+
+rollout:
+  max_turns: 5
+  termination_policy: last_tool
+  tool_timeout: 30
+  max_context_window: 32768
+
+trainer:
+  num_epochs: 20
+  learning_rate: 0.0001
