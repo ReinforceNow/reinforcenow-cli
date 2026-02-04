@@ -1,4 +1,4 @@
-"""SkyRL-style SQL execution rewards."""
+"""SkyRL-style SQL rewards."""
 
 import os
 import re
@@ -11,6 +11,14 @@ from rnow.core import RewardArgs, get_response, reward
 
 CACHE = "/tmp/skyrl_dbs"
 os.makedirs(CACHE, exist_ok=True)
+
+
+@reward
+def format(args: RewardArgs, messages: list) -> float:
+    response = get_response(messages)
+    has_solution = bool(re.search(r"<solution>.*?</solution>", response, re.DOTALL | re.IGNORECASE))
+    has_tool_call = any(m.get("role") == "assistant" and m.get("tool_calls") for m in messages)
+    return 1.0 if has_solution and has_tool_call else 0.0
 
 
 @reward
