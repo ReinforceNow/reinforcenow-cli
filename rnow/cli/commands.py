@@ -1158,6 +1158,7 @@ def orgs(ctx, org_id: str | None):
             "web-tasks",
             "off-distill-agent",
             "on-distill-agent",
+            "skyrl-sql",
         ]
     ),
     default="start",
@@ -1213,6 +1214,7 @@ def init(template: str, name: str, dataset: str, yes: bool):
         "web-tasks": "web-tasks",
         "off-distill-agent": "off-distill-agent",
         "on-distill-agent": "on-distill-agent",
+        "skyrl-sql": "skyrl-sql-project",
         "new": "new-project",
         "blank": "my-project",
     }

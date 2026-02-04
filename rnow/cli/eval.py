@@ -214,14 +214,19 @@ async def _eval_async(
                 "No model specified. Use --model flag or set model.path in config.yml"
             )
 
-    # Get project_id from config if not provided via flag
+    # Get project_id from config if not provided via flag, or generate one
     if project_id is None:
         if config.project_id:
             project_id = config.project_id
         else:
-            raise click.ClickException(
-                "No project ID specified. Use --project-id flag or set project_id in config.yml"
-            )
+            # Generate new project_id and save to config (like rnow init)
+            import uuid
+
+            project_id = str(uuid.uuid4())
+            config_data["project_id"] = project_id
+            with open(config_path, "w") as f:
+                yaml.dump(config_data, f, default_flow_style=False, sort_keys=False)
+            click.echo(click.style(f"Generated project_id: {project_id}", dim=True))
 
     # Load project files
     rewards_path = project_dir / "rewards.py"
