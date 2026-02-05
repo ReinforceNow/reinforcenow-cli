@@ -467,6 +467,10 @@ class EvalTriggerConfig(BaseModel):
 
     eval_id: str = Field(..., description="ID of the eval to run (from rnow eval)")
     step: int = Field(..., gt=0, description="Run eval every N training steps")
+    name: str | None = Field(
+        default=None,
+        description="Display name for eval metrics in graphs. Defaults to source eval's project name.",
+    )
     # pass@k flags are inherited from the original eval's config stored in S3
 
 

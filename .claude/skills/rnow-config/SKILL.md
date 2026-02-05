@@ -310,12 +310,52 @@ rollout:
 
 ### evals (top-level)
 
-Run-dependent evaluations that trigger during training. Create an eval with `rnow eval` first, then reference its ID.
+Run-dependent evaluations that trigger automatically during training. These run in separate containers and log pass@k metrics to training graphs.
 
-| Field | Required | Description |
-|-------|----------|-------------|
-| `eval_id` | Yes | Eval ID from `rnow eval` |
-| `step` | Yes | Run eval every N training steps |
+**Setup:**
+1. Create a standalone eval first using the UI or API
+2. Note its `eval_id` from the evals page
+3. Reference it in your config.yml
+
+```yaml
+evals:
+  - eval_id: cmla1l13e000004jwxu39jrpy  # From standalone eval
+    step: 100                            # Run every 100 steps
+    name: "MATH"                         # Display name in graphs (optional)
+```
+
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `eval_id` | Yes | - | Source eval ID (must exist) |
+| `step` | Yes | - | Run eval every N training steps |
+| `name` | No | eval_id[:8] | Display name for metrics in graphs |
+
+**How it works:**
+- Trainer spawns eval in a separate Modal container at each step interval
+- Eval reuses source eval's files from S3 (train.jsonl, rewards.py, config)
+- Does NOT create new Eval records - just logs metrics
+- pass@k scores appear in "Evaluation" section of training graphs
+
+**pass@k configuration:**
+The pass@1, pass@4, pass@8 metrics are configured on the **source eval** when you create it. Run-dependent evals inherit these settings. Only enabled metrics appear in graphs.
+
+**Graph display:**
+```
+Section: "Evaluation"
+Graphs:  "MATH_pass1", "MATH_pass4", "MATH_pass8"
+         (or "cmla1l13_pass1" etc. if no name specified)
+```
+
+**Multiple evals example:**
+```yaml
+evals:
+  - eval_id: abc123...
+    step: 50
+    name: "MATH"
+  - eval_id: xyz789...
+    step: 100
+    name: "GSM8K"
+```
 
 ---
 

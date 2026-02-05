@@ -2698,9 +2698,12 @@ def download(ctx, model_id: str, output: Path, keep_archive: bool):
 
 @click.command()
 @click.argument("run_id", required=True)
+@click.option(
+    "--save-model", is_flag=True, default=False, help="Save model checkpoint before stopping"
+)
 @click.option("--yes", "-y", is_flag=True, help="Skip confirmation (auto-enabled in non-TTY)")
 @click.pass_context
-def stop(ctx, run_id: str, yes: bool):
+def stop(ctx, run_id: str, save_model: bool, yes: bool):
     """Stop an active training run.
 
     Requires the RUN_ID obtained from 'rnow run' command.
@@ -2715,17 +2718,25 @@ def stop(ctx, run_id: str, yes: bool):
     ):
         raise click.Abort()
 
+    # Always ask about saving model in interactive mode unless --save-model was passed
+    if not save_model and sys.stdin.isatty():
+        save_model = click.confirm("Save model checkpoint?", default=False)
+
     base_url = ctx.obj.get("api_url", "https://www.reinforcenow.ai/api")
 
     try:
         click.echo(f"Stopping training run: {run_id}...")
-        response = api_request("post", "/training/stop", base_url, json={"run_id": run_id})
+        response = api_request(
+            "post", "/training/stop", base_url, json={"run_id": run_id, "save_model": save_model}
+        )
         response.raise_for_status()
         data = response.json()
     except requests.RequestException as e:
         raise click.ClickException(f"Failed to stop training: {e}")
 
     click.echo(click.style(f"✓ Training run stopped: {run_id}", fg="green"))
+    if save_model:
+        click.echo("  Model checkpoint will be saved")
 
     if data.get("duration_minutes"):
         click.echo(f"  Duration: {data['duration_minutes']:.1f} minutes")
