@@ -21,14 +21,19 @@ def is_authenticated() -> bool:
 
 
 def get_auth_headers() -> dict[str, str]:
-    """Get auth headers."""
+    """Get auth headers including active organization."""
     try:
         with open(CREDS_FILE) as f:
             creds = json.load(f)
-            return {
+            headers = {
                 "Content-Type": "application/json",
                 "Authorization": f"Bearer {creds['api_key']}",
             }
+            # Include active organization from CLI config
+            active_org = get_active_org_from_config()
+            if active_org:
+                headers["X-Organization-Id"] = active_org
+            return headers
     except (FileNotFoundError, json.JSONDecodeError, KeyError):
         raise click.ClickException("Not authenticated. Run 'reinforcenow login'")
 
