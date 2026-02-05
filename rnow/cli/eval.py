@@ -26,6 +26,7 @@ import yaml
 from rich.console import Console
 
 from rnow.cli.auth import get_auth_headers
+from rnow.cli.common import get_active_organization
 from rnow.cli.cube import CubeSpinner
 from rnow.cli.test import DEFAULT_API_URL, TEAL_RGB, is_gpu_model
 from rnow.models import ProjectConfig
@@ -312,6 +313,15 @@ async def _eval_async(
     if not auth_headers:
         raise click.ClickException("Not logged in. Run 'rnow login' first.")
 
+    # Get organization from CLI setting (same as rnow run)
+    organization_id = get_active_organization()
+    if not organization_id:
+        raise click.ClickException(
+            "No organization selected. Run "
+            + click.style("rnow orgs", fg=TEAL_RGB)
+            + " to select one."
+        )
+
     # Resolve model ID - if it's a UUID, use it directly; otherwise use the model name
     model_id = model
 
@@ -381,6 +391,7 @@ async def _eval_async(
                 json={
                     "modelId": model_id,
                     "projectId": project_id,
+                    "organizationId": organization_id,
                     "pass1": pass1,
                     "pass4": pass4,
                     "pass8": pass8,
