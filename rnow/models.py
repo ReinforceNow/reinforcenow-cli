@@ -14,7 +14,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class RunStatus(str, Enum):
@@ -460,6 +460,16 @@ class RolloutConfig(BaseModel):
     )
 
 
+class EvalTriggerConfig(BaseModel):
+    """Configuration for auto-triggering an eval during training."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    eval_id: str = Field(..., description="ID of the eval to run (from rnow eval)")
+    step: int = Field(..., gt=0, description="Run eval every N training steps")
+    # pass@k flags are inherited from the original eval's config stored in S3
+
+
 class TrainerConfig(BaseModel):
     """Trainer configuration."""
 
@@ -467,8 +477,17 @@ class TrainerConfig(BaseModel):
 
     num_epochs: int = Field(..., gt=0)
     learning_rate: float = Field(default=0.0001, gt=0)
-    save_step: int = Field(default=-1, ge=-1)  # -1 = end only, 0 = never save, N = every N steps
-    eval_step: int = Field(default=0, ge=0)  # Evaluate every N steps (0 = end of epoch only)
+    save_step: int = Field(default=-1, ge=-1)  # -1 = end only, N = every N steps (0 not allowed)
+
+    @field_validator("save_step")
+    @classmethod
+    def save_step_not_zero(cls, v: int) -> int:
+        if v == 0:
+            raise ValueError(
+                "save_step cannot be 0. Use -1 to save only at the end, or a positive number for periodic saves."
+            )
+        return v
+
     max_billing: float | None = Field(default=None, gt=0)  # Max dollars for this run
 
 
@@ -490,6 +509,7 @@ class ProjectConfig(BaseModel):
     algorithm: AlgorithmConfig | None = None  # RL only
     rollout: RolloutConfig | None = None  # RL and DISTILL
     teacher: TeacherConfig | None = None  # DISTILL only
+    evals: list[EvalTriggerConfig] = Field(default_factory=list)  # Run-dependent evals
 
     @model_validator(mode="after")
     def validate_config(self):

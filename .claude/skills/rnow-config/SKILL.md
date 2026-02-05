@@ -138,8 +138,12 @@ rollout:
 trainer:
   num_epochs: 30                # Number of epochs
   learning_rate: 0.0001         # Learning rate
-  save_step: 20                 # Save checkpoint every N steps (0 = end of epoch)
-  eval_step: 0                  # Evaluate every N steps (0 = end of epoch)
+  save_step: 20                 # -1 = end only, N = every N steps
+
+# Run-dependent evals (optional, top-level)
+evals:
+  - eval_id: your_eval_id       # From rnow eval
+    step: 100                   # Run every 100 steps
 ```
 
 ## Configuration Sections
@@ -302,8 +306,16 @@ rollout:
 |-------|----------|---------|-------------|
 | `num_epochs` | Yes | - | Number of training epochs |
 | `learning_rate` | Yes | - | Learning rate |
-| `save_step` | No | 0 | Save every N steps (0 = end of epoch) |
-| `eval_step` | No | 0 | Evaluate every N steps (0 = end of epoch) |
+| `save_step` | No | -1 | -1 = end only, N = every N steps |
+
+### evals (top-level)
+
+Run-dependent evaluations that trigger during training. Create an eval with `rnow eval` first, then reference its ID.
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `eval_id` | Yes | Eval ID from `rnow eval` |
+| `step` | Yes | Run eval every N training steps |
 
 ---
 
@@ -554,7 +566,6 @@ model:
 trainer:
   num_epochs: 3
   learning_rate: 0.00005
-  eval_step: 100
 ```
 
 ### Distillation for Reasoning

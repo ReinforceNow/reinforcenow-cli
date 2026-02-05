@@ -35,4 +35,3 @@ trainer:
   num_epochs: 3
   learning_rate: 0.0001
   save_step: 50
-  eval_step: 50

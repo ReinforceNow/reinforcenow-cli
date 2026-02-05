@@ -29,6 +29,7 @@ from rnow.cli.auth import get_auth_headers
 from rnow.cli.common import get_active_organization
 from rnow.cli.cube import CubeSpinner
 from rnow.cli.test import DEFAULT_API_URL, TEAL_RGB, is_gpu_model
+from rnow.cli.upload import get_upload_session, upload_with_boto3
 from rnow.models import ProjectConfig
 
 # Global flag for graceful shutdown
@@ -254,6 +255,45 @@ async def _eval_async(
     if max_samples and max_samples < len(samples):
         samples = samples[:max_samples]
 
+    # For large datasets, upload to S3 first (like rnow run does)
+    # Calculate actual payload size after any max_samples limiting
+    samples_json = "\n".join(json.dumps(s) for s in samples)
+    samples_size = len(samples_json.encode("utf-8"))
+
+    # 4MB threshold to stay under API payload limits
+    MAX_INLINE_BYTES = 4 * 1024 * 1024
+    s3_dataset_key = None
+
+    if samples_size > MAX_INLINE_BYTES:
+        try:
+            import tempfile
+            import uuid
+
+            # Generate a version ID for this eval upload
+            eval_version_id = f"eval-{uuid.uuid4().hex[:8]}"
+
+            # Write samples to temp file
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as tmp:
+                tmp.write(samples_json)
+                tmp_path = Path(tmp.name)
+
+            # Get S3 upload session (needs /api suffix)
+            upload_session = get_upload_session(f"{api_url}/api", project_id, eval_version_id)
+
+            # Upload to S3
+            upload_with_boto3(upload_session, [("train.jsonl", tmp_path, "project")])
+            tmp_path.unlink()  # Clean up temp file
+
+            # Build the S3 key that was uploaded
+            s3_dataset_key = f"{upload_session['projectPrefix']}/train.jsonl"
+            click.echo(
+                click.style(
+                    f"Uploaded dataset to S3 ({samples_size / 1024 / 1024:.1f} MB)", dim=True
+                )
+            )
+        except Exception as e:
+            raise click.ClickException(f"Failed to upload large dataset: {e}")
+
     # Read Dockerfile.* files
     dockerfiles: dict[str, str] = {}
     for dockerfile_path in project_dir.glob("Dockerfile.*"):
@@ -383,36 +423,41 @@ async def _eval_async(
     spinner.start()
 
     # Call the /api/evals/run endpoint
+    # Build request payload - use S3 key for large files, inline samples for small ones
+    request_payload = {
+        "modelId": model_id,
+        "projectId": project_id,
+        "organizationId": organization_id,
+        "pass1": pass1,
+        "pass4": pass4,
+        "pass8": pass8,
+        # Rollout data - either S3 key or inline samples
+        "s3_dataset_key": s3_dataset_key,
+        "samples": None if s3_dataset_key else samples,
+        "num_samples": len(samples),  # Always send count for display
+        "rewards_py_code": rewards_py_code,
+        "tools_py_code": tools_py_code,
+        "requirements_txt": requirements_txt,
+        "dockerfiles": dockerfiles if dockerfiles else None,
+        "secrets": project_secrets if project_secrets else None,
+        # Config
+        "model": model,
+        "max_context_window": max_context_window,
+        "max_turns": max_turns,
+        "temperature": 1.0,  # Use temp=1.0 for evaluation
+        "termination_policy": termination_policy,
+        "max_tool_response": max_tool_response,
+        "mcp_url": mcp_url,
+        "reasoning_mode": reasoning_mode,
+        "use_gpu": use_gpu,
+    }
+
     async with httpx.AsyncClient(timeout=30.0) as client:
         try:
             response = await client.post(
                 f"{api_url}/api/evals/run",
                 headers={**auth_headers, "Content-Type": "application/json"},
-                json={
-                    "modelId": model_id,
-                    "projectId": project_id,
-                    "organizationId": organization_id,
-                    "pass1": pass1,
-                    "pass4": pass4,
-                    "pass8": pass8,
-                    # Rollout data
-                    "samples": samples,
-                    "rewards_py_code": rewards_py_code,
-                    "tools_py_code": tools_py_code,
-                    "requirements_txt": requirements_txt,
-                    "dockerfiles": dockerfiles if dockerfiles else None,
-                    "secrets": project_secrets if project_secrets else None,
-                    # Config
-                    "model": model,
-                    "max_context_window": max_context_window,
-                    "max_turns": max_turns,
-                    "temperature": 1.0,  # Use temp=1.0 for evaluation
-                    "termination_policy": termination_policy,
-                    "max_tool_response": max_tool_response,
-                    "mcp_url": mcp_url,
-                    "reasoning_mode": reasoning_mode,
-                    "use_gpu": use_gpu,
-                },
+                json=request_payload,
             )
 
             if response.status_code != 200:

@@ -137,7 +137,11 @@ trainer:
   num_epochs: 30                # Number of epochs
   learning_rate: 0.0001         # Learning rate
   save_step: 20                 # -1 = end only, 0 = never, N = every N steps
-  eval_step: 0                  # Evaluate every N steps (0 = end of epoch)
+
+# Run-dependent evals (optional, top-level)
+evals:
+  - eval_id: your_eval_id       # From rnow eval
+    step: 100                   # Run every 100 steps
 ```
 
 ## Configuration Sections
@@ -301,7 +305,37 @@ rollout:
 | `num_epochs` | Yes | - | Number of training epochs |
 | `learning_rate` | Yes | - | Learning rate |
 | `save_step` | No | -1 | -1 = end only, 0 = never save, N = every N steps |
-| `eval_step` | No | 0 | Evaluate every N steps (0 = end of epoch) |
+
+### evals (top-level)
+
+Run-dependent evaluations that trigger during training. First create an eval with `rnow eval`, then reference its ID in your config.
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `eval_id` | Yes | Eval ID from `rnow eval` (copy from eval detail page) |
+| `step` | Yes | Run eval every N training steps |
+
+```yaml
+# Example: evals as top-level section
+trainer:
+  num_epochs: 10
+  learning_rate: 0.0001
+
+evals:
+  - eval_id: cmla1l13e000004jwxu39jrpy  # Copy from eval page
+    step: 100                            # Run every 100 steps
+  - eval_id: another_eval_id
+    step: 200                            # Different interval
+```
+
+**How it works:**
+1. Run `rnow eval` to create an evaluation (uploads train.jsonl, rewards.py to S3)
+2. Copy the Eval ID from the eval detail page
+3. Add the eval to the `evals` section in config.yml (top-level, not inside trainer)
+4. During training, evals spawn asynchronously (don't block training)
+5. Pass@k scores appear in your training graphs under the "Evaluation" section
+
+**Note:** Evals run in separate sandboxes and don't slow down training.
 
 ---
 
@@ -552,7 +586,6 @@ model:
 trainer:
   num_epochs: 3
   learning_rate: 0.00005
-  eval_step: 100
 ```
 
 ### Distillation for Reasoning

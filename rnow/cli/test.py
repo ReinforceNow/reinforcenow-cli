@@ -115,6 +115,10 @@ class RolloutClient:
         secrets: dict[str, str] | None = None,
         timeout_minutes: int = 30,
         start_time: float | None = None,
+        compact_mode: bool = False,
+        output_folder: Path | None = None,
+        sample_offset: int = 0,
+        silent: bool = False,
     ) -> tuple[str, list[dict]]:
         """
         Run rollouts with SSE streaming via the API streaming endpoint.
@@ -136,23 +140,28 @@ class RolloutClient:
         current_phase = "connecting"  # connecting, streaming
 
         # Create rollouts directory and find next run number
-        rollouts_dir = Path("rollouts")
-        rollouts_dir.mkdir(parents=True, exist_ok=True)
+        # Use provided output folder or create a new one
+        if output_folder:
+            run_folder = output_folder
+            run_num = int(run_folder.name.split("_")[1]) if "_" in run_folder.name else 0
+        else:
+            rollouts_dir = Path("rollouts")
+            rollouts_dir.mkdir(parents=True, exist_ok=True)
 
-        # Find the next available run number (rollout_1, rollout_2, etc.)
-        existing_runs = [
-            d for d in rollouts_dir.iterdir() if d.is_dir() and d.name.startswith("rollout_")
-        ]
-        existing_nums = []
-        for d in existing_runs:
-            try:
-                num = int(d.name.split("_")[1])
-                existing_nums.append(num)
-            except (IndexError, ValueError):
-                pass
-        run_num = max(existing_nums, default=0) + 1
-        run_folder = rollouts_dir / f"rollout_{run_num}"
-        run_folder.mkdir(parents=True, exist_ok=True)
+            # Find the next available run number (rollout_1, rollout_2, etc.)
+            existing_runs = [
+                d for d in rollouts_dir.iterdir() if d.is_dir() and d.name.startswith("rollout_")
+            ]
+            existing_nums = []
+            for d in existing_runs:
+                try:
+                    num = int(d.name.split("_")[1])
+                    existing_nums.append(num)
+                except (IndexError, ValueError):
+                    pass
+            run_num = max(existing_nums, default=0) + 1
+            run_folder = rollouts_dir / f"rollout_{run_num}"
+            run_folder.mkdir(parents=True, exist_ok=True)
 
         # Track files and conversations (for streaming writes)
         rollout_files: dict[int, Path] = {}
@@ -195,6 +204,46 @@ class RolloutClient:
             elapsed = int(time.time() - start_time)
 
             text = Text()
+
+            # Compact mode: show progress bar instead of individual rollouts
+            if compact_mode:
+                done_count = sum(1 for s in status.values() if s == "done")
+                error_count = sum(1 for s in status.values() if s == "error")
+                running_count = sum(1 for s in status.values() if s == "running")
+
+                # Calculate average reward from completed results
+                rewards = [
+                    r.get("total_reward", 0)
+                    for r in results_by_index.values()
+                    if r.get("total_reward") is not None
+                ]
+                avg_reward = sum(rewards) / len(rewards) if rewards else 0.0
+
+                # Progress bar
+                bar_width = 40
+                progress = done_count / num_samples if num_samples > 0 else 0
+                filled = int(bar_width * progress)
+                bar = "█" * filled + "░" * (bar_width - filled)
+
+                text.append(f"{spinner} ", style="white")
+                text.append(f"[{bar}]", style=TEAL)
+                text.append(f" {done_count}/{num_samples}", style="bold white")
+
+                if running_count > 0:
+                    text.append(f" ({running_count} running)", style="dim")
+
+                if error_count > 0:
+                    text.append(f" ({error_count} errors)", style="red")
+
+                if rewards:
+                    text.append(f"  avg_reward={avg_reward:.3f}", style="green")
+
+                text.append(f"  ({elapsed}s)\n", style="dim")
+
+                if done_count == num_samples:
+                    text.append("✓ Complete\n", style="green")
+
+                return text
 
             # Show rollout statuses
             for i in range(num_samples):
@@ -286,15 +335,21 @@ class RolloutClient:
         done_streaming = False
         rollout_id = ""
 
-        # Start the Live display immediately
-        with Live(render_status(), console=console, refresh_per_second=10) as live:
+        # Use nullcontext for silent mode (parallel batches)
+        live_ctx = (
+            contextlib.nullcontext()
+            if silent
+            else Live(render_status(), console=console, refresh_per_second=10)
+        )
+
+        with live_ctx as live:
             # Background task to update spinner and timer
             async def update_display():
-                while not done_streaming:
+                while not done_streaming and live is not None:
                     live.update(render_status())
                     await asyncio.sleep(0.1)
 
-            update_task = asyncio.create_task(update_display())
+            update_task = asyncio.create_task(update_display()) if not silent else None
 
             try:
                 # Build payload for Next.js API
@@ -375,7 +430,7 @@ class RolloutClient:
                                 status[idx] = "running"
 
                                 # Generate filename: sample_1.json, sample_2.json, etc.
-                                sample_num = idx + 1
+                                sample_num = sample_offset + idx + 1
                                 result_id = f"sample_{sample_num}"
                                 rollout_ids[idx] = result_id
                                 rollout_files[idx] = run_folder / f"{result_id}.json"
@@ -420,7 +475,7 @@ class RolloutClient:
                                 # Use existing ID or generate new one
                                 result_id = rollout_ids.get(idx)
                                 if not result_id:
-                                    sample_num = idx + 1
+                                    sample_num = sample_offset + idx + 1
                                     result_id = f"sample_{sample_num}"
                                     rollout_ids[idx] = result_id
                                     rollout_files[idx] = run_folder / f"{result_id}.json"
@@ -452,11 +507,13 @@ class RolloutClient:
 
             finally:
                 done_streaming = True
-                update_task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await update_task
+                if update_task:
+                    update_task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await update_task
                 # Final update
-                live.update(render_status())
+                if live is not None:
+                    live.update(render_status())
 
         return rollout_id, list(results_by_index.values())
 
@@ -533,6 +590,13 @@ class RolloutClient:
     help="Entry indices from train.jsonl (0-indexed). Examples: -e 5, -e 0,2,5, -e 0 -e 2 -e 5",
     multiple=True,
 )
+@click.option(
+    "--all",
+    "test_all",
+    is_flag=True,
+    default=False,
+    help="Test all entries in train.jsonl",
+)
 @click.pass_context
 def test(
     ctx,
@@ -543,6 +607,7 @@ def test(
     api_url,
     debug,
     entries,
+    test_all,
 ):
     """Test RL rollouts before submitting.
 
@@ -592,6 +657,7 @@ def test(
                 api_url=resolved_api_url,
                 debug=debug,
                 openai_api_key=openai_api_key,
+                test_all=test_all,
                 entries=entries,
                 start_time=start_time,
             )
@@ -803,6 +869,7 @@ async def _test_async(
     api_url: str,
     debug: bool = False,
     openai_api_key: str | None = None,
+    test_all: bool = False,
     entries: tuple[int, ...] = (),
     start_time: float | None = None,
 ):
@@ -1021,7 +1088,11 @@ async def _test_async(
         )
 
         # Select samples for batch rollout
-        if entries:
+        if test_all:
+            # Test all entries in train.jsonl
+            selected_samples = samples
+            click.echo(f"Testing all {len(samples)} entries")
+        elif entries:
             # Parse entries - support both "-e 0 -e 2" and "-e 0,2,5"
             entry_indices = []
             for entry in entries:
@@ -1049,17 +1120,129 @@ async def _test_async(
             selected_samples = [random.choice(samples) for _ in range(num_rollouts)]
 
         try:
-            # Start rollout and stream results
-            _, batch_results = await client.run_batch_rollouts(
-                samples=selected_samples,
-                tools_py_code=tools_py_code,
-                rewards_py_code=rewards_py_code,
-                requirements_txt=requirements_txt,
-                dockerfiles=dockerfiles if dockerfiles else None,
-                secrets=project_secrets if project_secrets else None,
-                timeout_minutes=60,
-                start_time=start_time,
-            )
+            # Chunk samples to avoid 413 errors (max ~50 per batch)
+            BATCH_SIZE = 50
+            batch_results = []
+
+            if len(selected_samples) > BATCH_SIZE:
+                total_batches = (len(selected_samples) + BATCH_SIZE - 1) // BATCH_SIZE
+                total_samples = len(selected_samples)
+
+                # Create a shared output folder for all batches
+                rollouts_dir = Path("rollouts")
+                rollouts_dir.mkdir(parents=True, exist_ok=True)
+                existing_runs = [
+                    d
+                    for d in rollouts_dir.iterdir()
+                    if d.is_dir() and d.name.startswith("rollout_")
+                ]
+                existing_nums = []
+                for d in existing_runs:
+                    try:
+                        num = int(d.name.split("_")[1])
+                        existing_nums.append(num)
+                    except (IndexError, ValueError):
+                        pass
+                run_num = max(existing_nums, default=0) + 1
+                shared_folder = rollouts_dir / f"rollout_{run_num}"
+                shared_folder.mkdir(parents=True, exist_ok=True)
+
+                # Shared progress tracking
+                completed_count = 0
+                error_count = 0
+                all_rewards: list[float] = []
+                progress_lock = asyncio.Lock()
+
+                async def run_batch(batch_idx: int):
+                    nonlocal completed_count, error_count
+                    batch_start = batch_idx * BATCH_SIZE
+                    batch_end = min(batch_start + BATCH_SIZE, total_samples)
+                    batch_samples = selected_samples[batch_start:batch_end]
+
+                    _, results = await client.run_batch_rollouts(
+                        samples=batch_samples,
+                        tools_py_code=tools_py_code,
+                        rewards_py_code=rewards_py_code,
+                        requirements_txt=requirements_txt,
+                        dockerfiles=dockerfiles if dockerfiles else None,
+                        secrets=project_secrets if project_secrets else None,
+                        timeout_minutes=60,
+                        start_time=start_time,
+                        output_folder=shared_folder,
+                        sample_offset=batch_start,
+                        silent=True,
+                    )
+
+                    # Update shared progress
+                    async with progress_lock:
+                        for r in results:
+                            if r.get("success"):
+                                completed_count += 1
+                                if r.get("total_reward") is not None:
+                                    all_rewards.append(r["total_reward"])
+                            else:
+                                error_count += 1
+
+                    return results
+
+                # Progress display task
+                async def show_progress():
+                    while True:
+                        elapsed = int(time.time() - start_time)
+
+                        done = completed_count + error_count
+                        bar_width = 40
+                        progress = done / total_samples if total_samples > 0 else 0
+                        filled = int(bar_width * progress)
+                        bar = "█" * filled + "░" * (bar_width - filled)
+
+                        avg_reward = sum(all_rewards) / len(all_rewards) if all_rewards else 0.0
+
+                        line = f"\r[{bar}] {done}/{total_samples}"
+                        if error_count > 0:
+                            line += click.style(f" ({error_count} errors)", fg="red")
+                        if all_rewards:
+                            line += click.style(f"  avg={avg_reward:.3f}", fg=TEAL_RGB, bold=True)
+                        line += f"  ({elapsed}s)"
+
+                        click.echo(line, nl=False)
+                        await asyncio.sleep(0.2)
+
+                # Run batches with progress display
+                progress_task = asyncio.create_task(show_progress())
+                try:
+                    all_results = await asyncio.gather(
+                        *[run_batch(i) for i in range(total_batches)],
+                        return_exceptions=True,
+                    )
+                finally:
+                    progress_task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await progress_task
+
+                # Final progress line
+                click.echo()  # New line after progress bar
+
+                # Flatten results, handling any exceptions
+                for result in all_results:
+                    if isinstance(result, Exception):
+                        click.echo(click.style(f"Batch failed: {result}", fg="red"))
+                    else:
+                        batch_results.extend(result)
+
+                click.echo(f"Results saved to rollouts/rollout_{run_num}/")
+            else:
+                # Single batch - start rollout and stream results
+                _, batch_results = await client.run_batch_rollouts(
+                    samples=selected_samples,
+                    tools_py_code=tools_py_code,
+                    rewards_py_code=rewards_py_code,
+                    requirements_txt=requirements_txt,
+                    dockerfiles=dockerfiles if dockerfiles else None,
+                    secrets=project_secrets if project_secrets else None,
+                    timeout_minutes=60,
+                    start_time=start_time,
+                )
         except asyncio.CancelledError:
             batch_results = []
         except httpx.HTTPStatusError as e:

@@ -2574,11 +2574,13 @@ def download(ctx, model_id: str, output: Path, keep_archive: bool):
 
     base_url = ctx.obj.get("api_url", "https://www.reinforcenow.ai/api")
 
-    # Get download URL from API
-    click.echo(f"Fetching download URL for model: {model_id}...")
+    # Get download URL from API with spinner
+    spinner = Spinner("Fetching LoRA adapter...")
+    spinner.start()
 
     try:
         response = api_request("get", f"/models/{model_id}/download", base_url)
+        spinner.stop()
 
         if response.status_code == 404:
             raise click.ClickException("Model not found or no file available for download")
@@ -2594,6 +2596,7 @@ def download(ctx, model_id: str, output: Path, keep_archive: bool):
         data = response.json()
 
     except requests.RequestException as e:
+        spinner.stop()
         raise click.ClickException(f"Failed to get download URL: {e}")
 
     download_url = data.get("downloadUrl")
@@ -2613,7 +2616,7 @@ def download(ctx, model_id: str, output: Path, keep_archive: bool):
     output.mkdir(parents=True, exist_ok=True)
 
     # Download the file
-    click.echo(f"Downloading {model_name}...")
+    click.echo(f"Downloading LoRA adapter ({model_name})...")
 
     if model_size > 0:
         size_mb = model_size / (1024 * 1024)

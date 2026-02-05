@@ -40,6 +40,14 @@ uv pip install -r requirements.txt
 uv run --active rnow test -n 3
 ```
 
+## Supported Models
+
+- `Qwen/Qwen3-4B-Instruct-2507`
+- `Qwen/Qwen3-8B`
+- `Qwen/Qwen3-30B-A3B`
+- `Qwen/Qwen3-30B-A3B-Instruct-2507`
+- `Qwen/Qwen3-32B`
+
 ## Data Sources
 
 - [NovaSky-AI/SkyRL-SQL-653-data](https://huggingface.co/datasets/NovaSky-AI/SkyRL-SQL-653-data)
