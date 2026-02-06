@@ -471,7 +471,10 @@ class EvalTriggerConfig(BaseModel):
         default=None,
         description="Display name for eval metrics in graphs. Defaults to source eval's project name.",
     )
-    # pass@k flags are inherited from the original eval's config stored in S3
+    # pass@k flags - if not specified, inherited from source eval's config in S3
+    pass1: bool | None = Field(default=None, description="Calculate pass@1 metric")
+    pass4: bool | None = Field(default=None, description="Calculate pass@4 metric")
+    pass8: bool | None = Field(default=None, description="Calculate pass@8 metric")
 
 
 class TrainerConfig(BaseModel):

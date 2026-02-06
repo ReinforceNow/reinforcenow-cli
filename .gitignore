@@ -17,8 +17,12 @@ project4/
 project5/
 project6/
 project7/
+project8/
+project9/
+project10/
 projects/
 
 # Environment and config
+.env
 .DS_Store
 tmp
