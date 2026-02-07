@@ -139,7 +139,7 @@ def reward(
     *,
     precondition: bool = False,
     sandbox: bool = False,
-    timeout: int = 60,
+    timeout: int | None = None,
 ) -> Callable:
     """
     Decorator to register reward functions with validation.
@@ -180,9 +180,9 @@ def reward(
             - Access files created during LLM interaction
             - Run tests (pytest, etc.)
             - Execute code in the same environment as tools
-        timeout: Timeout in seconds for this reward function (default: 60).
-            If the reward times out, it returns a special "timeout" status
-            instead of a numeric value.
+        timeout: Timeout in seconds for this reward function.
+            Overrides the config's reward_timeout for this specific function.
+            If not set, uses reward_timeout from config.yml (default: 60s).
     """
 
     def decorator(func):

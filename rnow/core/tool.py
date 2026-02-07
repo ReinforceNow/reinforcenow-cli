@@ -344,7 +344,7 @@ def _try_coerce(value: Any, expected_types: list[str]) -> tuple[bool, Any]:
     return False, value
 
 
-def tool(fn: Callable = None, *, sandbox: bool = False, timeout: int = 60) -> Callable:
+def tool(fn: Callable = None, *, sandbox: bool = False, timeout: int | None = None) -> Callable:
     """
     Decorator to register tool functions with robust validation.
 

@@ -10,16 +10,7 @@ wheels/
 .venv
 
 # Project workspace directories
-project/
-project2/
-project3/
-project4/
-project5/
-project6/
-project7/
-project8/
-project9/
-project10/
+project*/
 projects/
 
 # Environment and config

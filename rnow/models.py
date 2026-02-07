@@ -442,7 +442,12 @@ class RolloutConfig(BaseModel):
     tool_timeout: int = Field(
         default=60,
         gt=0,
-        description="Timeout in seconds for tool calls. Browser automation may need longer timeouts (default: 60s).",
+        description="Timeout in seconds for tool calls. Overridden by @tool(timeout=X) per function. Browser automation may need longer timeouts (default: 60s).",
+    )
+    reward_timeout: int = Field(
+        default=60,
+        gt=0,
+        description="Timeout in seconds for reward calls. Overridden by @reward(timeout=X) per function (default: 60s).",
     )
     max_tool_response: int | None = Field(
         default=None,
@@ -456,7 +461,7 @@ class RolloutConfig(BaseModel):
     rollout_timeout: int | None = Field(
         default=None,
         gt=0,
-        description="Maximum time in seconds for a single rollout. If exceeded, rollout is marked as timed out with 0 rewards. Default None (no timeout).",
+        description="Maximum time in seconds for a single rollout. Hard wall-clock deadline that kills stuck rollouts. Default None (no timeout, but 1 hour safety net always applies).",
     )
 
 

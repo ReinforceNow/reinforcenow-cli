@@ -36,7 +36,7 @@ rnow run
 | `config.yml` | Training configuration with `mcp_url` |
 | `train.jsonl` | SimpleQA questions with docker field |
 | `rewards.py` | used_browser (precondition) + accuracy |
-| `requirements.txt` | Sidecar dependencies (jellyfish) |
+| `requirements.txt` | Executor dependencies (jellyfish) |
 | `Dockerfile.playwright` | Playwright MCP server image |
 
 ## Browser Tools (via MCP)

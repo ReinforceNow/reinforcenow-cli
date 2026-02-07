@@ -81,6 +81,12 @@ console = Console()
     help="Project ID to associate with this evaluation (required)",
 )
 @click.option(
+    "--eval-id",
+    "source_eval_id",
+    default=None,
+    help="Re-run an existing eval with a different model. Reuses all files (train.jsonl, rewards.py, tools.py) from the source eval.",
+)
+@click.option(
     "--api-url",
     envvar="RNOW_API_URL",
     default=None,
@@ -97,6 +103,7 @@ def eval_cmd(
     pass8,
     max_samples,
     project_id,
+    source_eval_id,
     api_url,
 ):
     """Run model evaluation and calculate pass@k metrics.
@@ -107,6 +114,7 @@ def eval_cmd(
 
     Example:
         rnow eval --model cm123abc --project-id proj456 --pass1 --pass8
+        rnow eval --eval-id cmxyz123 --model Qwen/Qwen3-8B --pass1 --pass4
     """
     global _shutdown_requested
     _shutdown_requested = False
@@ -154,6 +162,7 @@ def eval_cmd(
                 pass8=pass8,
                 max_samples=max_samples,
                 project_id=project_id,
+                source_eval_id=source_eval_id,
                 api_url=resolved_api_url,
                 openai_api_key=openai_api_key,
                 start_time=start_time,
@@ -178,6 +187,7 @@ async def _eval_async(
     max_samples: int | None,
     project_id: str,
     api_url: str,
+    source_eval_id: str | None = None,
     openai_api_key: str | None = None,
     start_time: float | None = None,
 ):
@@ -189,6 +199,135 @@ async def _eval_async(
 
     project_dir = Path(project_dir)
 
+    # --eval-id mode: reuse files from an existing eval, only need model
+    if source_eval_id:
+        if model is None:
+            raise click.ClickException(
+                "When using --eval-id, you must specify --model to evaluate with."
+            )
+
+        # Still load .env for secrets
+        project_secrets: dict[str, str] = {}
+        env_path = project_dir / ".env"
+        if env_path.exists():
+            for line in env_path.read_text().splitlines():
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    key, _, value = line.partition("=")
+                    value = value.strip().strip("'\"")
+                    project_secrets[key.strip()] = value
+
+        # Also check common secret env vars from shell
+        secret_patterns = ["API_KEY", "SECRET", "TOKEN", "PROJECT_ID", "OPENAI", "GEMINI", "HF_"]
+        for key, value in os.environ.items():
+            if any(pattern in key for pattern in secret_patterns):
+                project_secrets[key] = value
+
+        use_gpu = is_gpu_model(model)
+        if not use_gpu and not openai_api_key:
+            raise click.ClickException(
+                "OPENAI_API_KEY required for OpenAI models. "
+                "Set it in .env or use a GPU model (e.g., --model Qwen/Qwen3-8B)"
+            )
+
+        # Determine max k value needed
+        max_k = 1
+        if pass4:
+            max_k = max(max_k, 4)
+        if pass8:
+            max_k = max(max_k, 8)
+
+        # Build metrics string for display
+        metrics_str = []
+        if pass1:
+            metrics_str.append("pass@1")
+        if pass4:
+            metrics_str.append("pass@4")
+        if pass8:
+            metrics_str.append("pass@8")
+
+        # Get auth headers
+        auth_headers = get_auth_headers()
+        if not auth_headers:
+            raise click.ClickException("Not logged in. Run 'rnow login' first.")
+
+        organization_id = get_active_organization()
+        if not organization_id:
+            raise click.ClickException(
+                "No organization selected. Run "
+                + click.style("rnow orgs", fg=TEAL_RGB)
+                + " to select one."
+            )
+
+        if project_secrets:
+            click.echo(
+                click.style(
+                    f"🔐 Loaded {len(project_secrets)} secret(s) from .env + environment", dim=True
+                )
+            )
+
+        click.echo(click.style("Source eval: ", fg=TEAL_RGB) + f"{source_eval_id}")
+        click.echo()
+
+        # Start cube spinner
+        spinner = CubeSpinner()
+        spinner.start()
+
+        request_payload = {
+            "modelId": model,
+            "projectId": project_id,
+            "organizationId": organization_id,
+            "sourceEvalId": source_eval_id,
+            "pass1": pass1,
+            "pass4": pass4,
+            "pass8": pass8,
+            "secrets": project_secrets if project_secrets else None,
+            "model": model,
+            "use_gpu": use_gpu,
+        }
+
+        if max_samples:
+            request_payload["num_samples"] = max_samples
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            try:
+                response = await client.post(
+                    f"{api_url}/api/evals/run",
+                    headers={**auth_headers, "Content-Type": "application/json"},
+                    json=request_payload,
+                )
+
+                if response.status_code != 200:
+                    spinner.stop()
+                    error_text = response.text
+                    try:
+                        error_data = response.json()
+                        error_text = error_data.get("error", error_text)
+                    except Exception:
+                        pass
+                    raise click.ClickException(f"Failed to start evaluation: {error_text}")
+
+                data = response.json()
+                eval_id = data.get("data", {}).get("evalId")
+
+                spinner.stop(keep_visible=True)
+
+                click.echo(click.style("Evaluation started", fg=TEAL_RGB, bold=True))
+                click.echo()
+                click.echo(f"  Model:    {click.style(model, fg=TEAL_RGB)}")
+                click.echo(f"  Source:   {source_eval_id}")
+                click.echo(f"  Metrics:  {', '.join(metrics_str)}")
+                click.echo()
+                click.echo("View your evaluation:")
+                click.echo(click.style(f"https://www.reinforcenow.ai/evals/{eval_id}", fg=TEAL_RGB))
+
+            except httpx.RequestError as e:
+                spinner.stop()
+                raise click.ClickException(f"Failed to connect to API: {e}")
+
+        return  # Done with --eval-id path
+
+    # Standard path: load from project directory
     # Load config
     config_path = project_dir / "config.yml"
     if not config_path.exists():

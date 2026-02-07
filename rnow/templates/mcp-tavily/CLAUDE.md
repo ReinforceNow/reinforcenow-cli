@@ -45,7 +45,7 @@ The model receives tool schemas from MCP and can call them during rollouts.
 
 | Feature | tools.py | MCP |
 |---------|----------|-----|
-| Where tools run | Sidecar/Sandbox | External server |
+| Where tools run | Executor/Sandbox | External server |
 | Setup | Write Python | Connect to URL |
 | Use case | Custom logic | Third-party services |
 
