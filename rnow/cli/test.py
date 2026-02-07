@@ -980,6 +980,16 @@ async def _test_async(
     if project_secrets:
         click.echo(f"  Loaded secrets: {list(project_secrets.keys())}")
 
+    # Warn if HF_TOKEN is not set (HuggingFace rate-limits unauthenticated requests)
+    if not project_secrets.get("HF_TOKEN") and not os.environ.get("HF_TOKEN"):
+        click.echo(
+            click.style(
+                "Warning: HF_TOKEN not found. Add HF_TOKEN=hf_xxx to your .env file to avoid "
+                "HuggingFace rate limiting. Get a token at https://huggingface.co/settings/tokens",
+                fg="red",
+            )
+        )
+
     if not samples:
         raise click.ClickException("train.jsonl is empty")
 

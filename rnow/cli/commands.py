@@ -2056,6 +2056,16 @@ def run(
             )
         )
 
+    # Warn if HF_TOKEN is not set (HuggingFace rate-limits unauthenticated requests)
+    if not secret_values.get("HF_TOKEN") and not os.environ.get("HF_TOKEN"):
+        click.echo(
+            click.style(
+                "Warning: HF_TOKEN not found. Add HF_TOKEN=hf_xxx to your .env file to avoid "
+                "HuggingFace rate limiting. Get a token at https://huggingface.co/settings/tokens",
+                fg="red",
+            )
+        )
+
     # Validate required files (all in the same directory now)
     required_files = {
         "train.jsonl": dir / "train.jsonl",

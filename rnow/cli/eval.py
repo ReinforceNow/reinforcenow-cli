@@ -455,6 +455,16 @@ async def _eval_async(
         if any(pattern in key for pattern in secret_patterns):
             project_secrets[key] = value
 
+    # Warn if HF_TOKEN is not set (HuggingFace rate-limits unauthenticated requests)
+    if not project_secrets.get("HF_TOKEN") and not os.environ.get("HF_TOKEN"):
+        click.echo(
+            click.style(
+                "Warning: HF_TOKEN not found. Add HF_TOKEN=hf_xxx to your .env file to avoid "
+                "HuggingFace rate limiting. Get a token at https://huggingface.co/settings/tokens",
+                fg="red",
+            )
+        )
+
     # Determine max k value needed (number of rollouts per sample)
     max_k = 1
     if pass4:
