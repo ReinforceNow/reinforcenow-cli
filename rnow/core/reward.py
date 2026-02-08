@@ -1,5 +1,5 @@
 """
-Reward entry point for ReinforceNow with validation.
+Reward entry point for rnow with validation.
 
 Validates at decorator-time:
 - Function has correct signature: (args: RewardArgs, messages: list) -> float

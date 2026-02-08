@@ -1,4 +1,4 @@
-# reinforcenow/cli/main.py
+# rnow/cli/main.py
 
 import click
 

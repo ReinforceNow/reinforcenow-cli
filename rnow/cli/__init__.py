@@ -1,4 +1,4 @@
-# reinforcenow/cli/__init__.py
+# rnow/cli/__init__.py
 # CLI package exports
 
 from rnow.cli.main import cli

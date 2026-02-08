@@ -57,7 +57,7 @@ def is_gpu_model(model: str) -> bool:
 
 
 def _looks_like_model_id(model: str) -> bool:
-    """Check if model looks like a ReinforceNow model ID (UUID format)."""
+    """Check if model looks like an rnow model ID (UUID format)."""
     import re
 
     # UUID format: 8-4-4-4-12 hex characters
@@ -611,7 +611,7 @@ def test(
 ):
     """Test RL rollouts before submitting.
 
-    Runs rollouts via the ReinforceNow API. Requires OPENAI_API_KEY.
+    Runs rollouts via the rnow API. Requires OPENAI_API_KEY.
 
     Works with RL and SFT projects. For SFT/distillation, rewards.py is optional.
     """

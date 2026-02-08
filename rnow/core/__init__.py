@@ -1,5 +1,5 @@
 """
-ReinforceNow Core - Entry points for reward and tool decorators.
+rnow core - Entry points for reward and tool decorators.
 
 Users only need:
 - @reward decorator for defining reward functions

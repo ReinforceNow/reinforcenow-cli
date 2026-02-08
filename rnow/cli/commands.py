@@ -1,4 +1,4 @@
-# reinforcenow/cli/commands.py
+# rnow/cli/commands.py
 
 import itertools
 import json
@@ -786,7 +786,7 @@ get_thinking_mode_display = get_reasoning_mode_display
 
 # Simple session for API calls
 session = requests.Session()
-session.headers["User-Agent"] = "ReinforceNow-CLI/1.0"
+session.headers["User-Agent"] = "rnow-cli/1.0"
 
 
 def api_request(
@@ -810,7 +810,7 @@ def api_request(
 @click.option("--force", "-f", is_flag=True, help="Force new login even if already authenticated")
 @click.pass_context
 def login(ctx, force: bool):
-    """Login to ReinforceNow platform.
+    """Login to rnow platform.
 
     Uses OAuth device flow for authentication.
     """
@@ -900,7 +900,7 @@ def login(ctx, force: bool):
 
 @click.command()
 def logout():
-    """Logout from ReinforceNow."""
+    """Logout from rnow."""
     auth.logout()
 
 
@@ -1168,7 +1168,7 @@ def orgs(ctx, org_id: str | None):
 @click.option("--dataset", "-d", help="Dataset name (will prompt if not provided)")
 @click.option("--yes", "-y", is_flag=True, help="Skip confirmations (auto-enabled in non-TTY)")
 def init(template: str, name: str, dataset: str, yes: bool):
-    """Initialize a new ReinforceNow project."""
+    """Initialize a new rnow project."""
 
     import shutil
     import sys
@@ -1834,7 +1834,7 @@ def run(
     lr: float,
     overrides: tuple[str, ...],
 ):
-    """Submit project for training on ReinforceNow platform.
+    """Submit project for training on rnow platform.
 
     You can override any config.yml setting by passing key=value arguments:
 

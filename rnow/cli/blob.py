@@ -1,4 +1,4 @@
-# reinforcenow/cli/blob.py
+# rnow/cli/blob.py
 """Vercel Blob upload support for large files."""
 
 from pathlib import Path

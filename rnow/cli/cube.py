@@ -1,4 +1,4 @@
-# reinforcenow/cli/cube.py
+# rnow/cli/cube.py
 """ASCII 3D rotating cube animation for loading states.
 
 Inspired by https://github.com/leonmavr/retrovoxel

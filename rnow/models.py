@@ -1,5 +1,5 @@
 """
-ReinforceNow Models - User-facing types for the rnow CLI.
+rnow models - User-facing types for the rnow CLI.
 
 This module contains ONLY the types that users need:
 - RewardArgs for reward function signatures
@@ -351,14 +351,14 @@ class ModelConfig(BaseModel):
 
     The `path` field accepts either:
     - A supported base model name (e.g., "Qwen/Qwen3-4B-Instruct-2507")
-    - A ReinforceNow model ID (e.g., "acfa2862-23a9-4e65-ab68-b9b2698b0e75") to resume from a finetuned model
+    - An rnow model ID (e.g., "acfa2862-23a9-4e65-ab68-b9b2698b0e75") to resume from a finetuned model
     """
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     path: str = Field(
         ...,
-        description="Base model name (e.g., 'Qwen/Qwen3-8B') or a ReinforceNow model ID to resume from",
+        description="Base model name (e.g., 'Qwen/Qwen3-8B') or an rnow model ID to resume from",
     )
     qlora_rank: int = Field(default=32, ge=1)
     qlora_alpha: int | None = Field(default=None, ge=1)  # Defaults to qlora_rank * 2

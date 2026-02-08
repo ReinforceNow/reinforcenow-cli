@@ -12,7 +12,7 @@ rnow = ["templates/**/*", "skills/**/*"]
 [project]
 name = "rnow"
 version = "0.4.34"
-description = "ReinforceNow CLI - Reinforcement Learning platform command-line interface"
+description = "rnow CLI - Reinforcement Learning platform command-line interface"
 readme = "README.md"
 requires-python = ">=3.11,<3.15"
 dependencies = [

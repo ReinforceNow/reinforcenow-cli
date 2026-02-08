@@ -1,4 +1,4 @@
-# reinforcenow/cli/upload.py
+# rnow/cli/upload.py
 """Direct S3 upload support via STS temporary credentials."""
 
 from pathlib import Path

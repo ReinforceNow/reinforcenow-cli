@@ -1,4 +1,4 @@
-# reinforcenow/cli/common.py
+# rnow/cli/common.py
 
 import json
 
@@ -25,4 +25,4 @@ def get_active_organization():
 def require_auth():
     """Ensure authenticated."""
     if not auth.is_authenticated():
-        raise click.ClickException("Not authenticated. Run 'reinforcenow login'")
+        raise click.ClickException("Not authenticated. Run 'rnow login'")

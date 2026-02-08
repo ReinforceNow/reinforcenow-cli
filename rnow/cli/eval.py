@@ -110,7 +110,7 @@ def eval_cmd(
 
     Runs rollouts on all samples in train.jsonl and calculates pass@1, pass@4,
     and/or pass@8 metrics using the unbiased estimator from the Codex paper.
-    Results are saved to the ReinforceNow database.
+    Results are saved to the rnow database.
 
     Example:
         rnow eval --model cm123abc --project-id proj456 --pass1 --pass8

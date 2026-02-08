@@ -1,4 +1,4 @@
-# reinforcenow/cli/auth.py
+# rnow/cli/auth.py
 
 import json
 from pathlib import Path
@@ -6,7 +6,7 @@ from pathlib import Path
 import click
 
 # Simple home directory paths
-DATA_DIR = Path.home() / ".reinforcenow"
+DATA_DIR = Path.home() / ".rnow"
 CREDS_FILE = DATA_DIR / "credentials.json"
 CONFIG_FILE = DATA_DIR / "config.json"
 
@@ -35,7 +35,7 @@ def get_auth_headers() -> dict[str, str]:
                 headers["X-Organization-Id"] = active_org
             return headers
     except (FileNotFoundError, json.JSONDecodeError, KeyError):
-        raise click.ClickException("Not authenticated. Run 'reinforcenow login'")
+        raise click.ClickException("Not authenticated. Run 'rnow login'")
 
 
 def get_active_org_from_config() -> str | None:

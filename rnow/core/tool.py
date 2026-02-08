@@ -1,5 +1,5 @@
 """
-Tool entry point for ReinforceNow with robust validation.
+Tool entry point for rnow with robust validation.
 
 Validates at decorator-time:
 - Function has docstring or description
