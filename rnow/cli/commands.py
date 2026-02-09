@@ -734,6 +734,17 @@ def get_reasoning_mode_display(config: models.ProjectConfig) -> str:
     reasoning_mode = config.rollout.reasoning_mode if config.rollout else None
     model = config.model.path
 
+    # OpenAI API models
+    if model in ("gpt-5-nano", "gpt-5-mini", "gpt-5.2", "gpt-5.2-pro"):
+        if reasoning_mode in ("disabled", "none"):
+            return "Reasoning Off"
+        if reasoning_mode:
+            return f"Reasoning {reasoning_mode.capitalize()}"
+        # Default: nano/mini/pro always reason at medium, gpt-5.2 defaults to none
+        if model == "gpt-5.2":
+            return "Reasoning Off"
+        return "Reasoning Medium"
+
     # GPT-OSS: Reasoning models with levels
     if model in ["openai/gpt-oss-120b", "openai/gpt-oss-20b"]:
         mode_map = {
@@ -1798,7 +1809,7 @@ def _submit_single_run(
     "--model",
     "-m",
     default=None,
-    help="Override model path (e.g., Qwen/Qwen3-4B)",
+    help="Override model path. Use a base model (Qwen/Qwen3-8B), finetuned model ID (UUID), or OpenAI model (gpt-5-nano, gpt-5-mini, gpt-5.2, gpt-5.2-pro).",
 )
 @click.option(
     "--epochs",
@@ -1857,7 +1868,7 @@ def run(
         algorithm.loss_fn            Loss function: ppo, importance_sampling
         rollout.max_turns            Max conversation turns for RL
         rollout.max_context_window   Max context window (default: 32768)
-        rollout.reasoning_mode   Reasoning mode: disabled, low, medium, high
+        rollout.reasoning_mode   Reasoning mode: disabled, none, minimal, low, medium, high, xhigh
 
     Multi-model training:
         If model.path is a list in config.yml, a separate run will be submitted
@@ -2348,12 +2359,22 @@ def run(
 
     # Collect files to upload - all files go to project now (including train.jsonl)
     files_to_upload = []
+    tmp_config_path = None
 
-    # Config file
+    # Config file - write modified config_data (with overrides applied) to temp file
+    # instead of uploading the original file which doesn't reflect CLI overrides
+    import tempfile
+
     if config_yml.exists():
-        files_to_upload.append(("config.yml", config_yml, "project"))
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yml", delete=False) as tmp:
+            yaml.dump(config_data, tmp, default_flow_style=False, sort_keys=False)
+            tmp_config_path = Path(tmp.name)
+        files_to_upload.append(("config.yml", tmp_config_path, "project"))
     elif config_json.exists():
-        files_to_upload.append(("config.json", config_json, "project"))
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as tmp:
+            json.dump(config_data, tmp)
+            tmp_config_path = Path(tmp.name)
+        files_to_upload.append(("config.json", tmp_config_path, "project"))
 
     # Required files - all go to project now
     for file_name, path in required_files.items():
@@ -2395,6 +2416,10 @@ def run(
     except Exception as e:
         spinner.stop()
         raise click.ClickException(f"Failed to upload files to S3: {e}")
+    finally:
+        # Clean up temp config file
+        if tmp_config_path:
+            tmp_config_path.unlink(missing_ok=True)
 
     # No multipart files needed - everything is in S3
     files = []
@@ -2714,18 +2739,14 @@ def download(ctx, model_id: str, output: Path, keep_archive: bool):
 @click.option("--yes", "-y", is_flag=True, help="Skip confirmation (auto-enabled in non-TTY)")
 @click.pass_context
 def stop(ctx, run_id: str, save_model: bool, yes: bool):
-    """Stop an active training run.
+    """Stop an active training run or evaluation.
 
-    Requires the RUN_ID obtained from 'rnow run' command.
+    Accepts a RUN_ID or EVAL_ID. The backend auto-detects the type.
     """
     import sys
 
     # Confirm unless --yes flag or non-TTY
-    if (
-        not yes
-        and sys.stdin.isatty()
-        and not click.confirm("Are you sure you want to stop this training run?")
-    ):
+    if not yes and sys.stdin.isatty() and not click.confirm("Are you sure you want to stop this?"):
         raise click.Abort()
 
     # Always ask about saving model in interactive mode unless --save-model was passed
@@ -2735,18 +2756,22 @@ def stop(ctx, run_id: str, save_model: bool, yes: bool):
     base_url = ctx.obj.get("api_url", "https://www.reinforcenow.ai/api")
 
     try:
-        click.echo(f"Stopping training run: {run_id}...")
+        click.echo(f"Stopping: {run_id}...")
         response = api_request(
             "post", "/training/stop", base_url, json={"run_id": run_id, "save_model": save_model}
         )
         response.raise_for_status()
         data = response.json()
     except requests.RequestException as e:
-        raise click.ClickException(f"Failed to stop training: {e}")
+        raise click.ClickException(f"Failed to stop: {e}")
 
-    click.echo(click.style(f"✓ Training run stopped: {run_id}", fg="green"))
-    if save_model:
-        click.echo("  Model checkpoint will be saved")
+    stopped_type = data.get("type", "run")
+    if stopped_type == "eval":
+        click.echo(click.style(f"✓ Evaluation stopped: {run_id}", fg="green"))
+    else:
+        click.echo(click.style(f"✓ Training run stopped: {run_id}", fg="green"))
+        if save_model:
+            click.echo("  Model checkpoint will be saved")
 
     if data.get("duration_minutes"):
         click.echo(f"  Duration: {data['duration_minutes']:.1f} minutes")

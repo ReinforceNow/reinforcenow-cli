@@ -48,7 +48,7 @@ def is_gpu_model(model: str) -> bool:
     """Check if model requires GPU infrastructure vs OpenAI API.
 
     GPU models: Models in SUPPORTED_MODELS_SET (Qwen, Llama, DeepSeek, etc.)
-    OpenAI models: gpt-5.2, gpt-5-mini, gpt-5-nano, gpt-5-pro (and snapshots)
+    OpenAI models: gpt-5.2, gpt-5-mini, gpt-5-nano, gpt-5.2-pro (and snapshots)
     """
     # Model IDs (UUIDs) are finetuned models that require GPU
     if _looks_like_model_id(model):
@@ -560,7 +560,7 @@ class RolloutClient:
 @click.option(
     "--model",
     default=None,
-    help="Model for sampling. Use gpt-5 models (gpt-5-nano, gpt-5-mini, gpt-5.2, gpt-5-pro) "
+    help="Model for sampling. Use gpt-5 models (gpt-5-nano, gpt-5-mini, gpt-5.2, gpt-5.2-pro) "
     "or a finetuned model ID.",
 )
 @click.option(
@@ -997,7 +997,7 @@ async def _test_async(
     model_name = model_override if model_override else "gpt-5-nano"
 
     # Validate model - only allow gpt-5 models or GPU models
-    valid_gpt5_models = {"gpt-5-nano", "gpt-5-mini", "gpt-5.2", "gpt-5-pro"}
+    valid_gpt5_models = {"gpt-5-nano", "gpt-5-mini", "gpt-5.2", "gpt-5.2-pro"}
     is_gpt5_model = model_name in valid_gpt5_models or model_name.startswith("gpt-5")
     is_gpu = is_gpu_model(model_name)
     is_model_id_check = _looks_like_model_id(model_name)
@@ -1012,7 +1012,7 @@ async def _test_async(
         click.echo(click.style("    • gpt-5-nano (fastest, recommended for testing)", dim=True))
         click.echo(click.style("    • gpt-5-mini", dim=True))
         click.echo(click.style("    • gpt-5.2", dim=True))
-        click.echo(click.style("    • gpt-5-pro (highest quality)", dim=True))
+        click.echo(click.style("    • gpt-5.2-pro (highest quality)", dim=True))
         click.echo(click.style("    • GPU models (Qwen/Qwen3-8B, etc.)", dim=True))
         click.echo(click.style("    • Finetuned model IDs", dim=True))
         click.echo()

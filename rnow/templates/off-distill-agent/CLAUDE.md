@@ -56,11 +56,11 @@ For custom prompts without existing teacher completions:
 
 # Generate teacher completions
 rnow test -n 50 --model gpt-5.2
-rnow test -n 50 --model gpt-5-pro  # Higher quality
+rnow test -n 50 --model gpt-5.2-pro  # Higher quality
 
 # Convert and train
 python convert_rollouts.py
 rnow run
 ```
 
-Supported models for `rnow test`: gpt-5-nano, gpt-5-mini, gpt-5.2, gpt-5-pro
+Supported models for `rnow test`: gpt-5-nano, gpt-5-mini, gpt-5.2, gpt-5.2-pro

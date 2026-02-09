@@ -87,17 +87,28 @@ console = Console()
     help="Re-run an existing eval with a different model. Reuses all files (train.jsonl, rewards.py, tools.py) from the source eval.",
 )
 @click.option(
-    "--temperature",
-    "-t",
+    "--pass1-temp",
     default=None,
     type=float,
-    help="Sampling temperature. If not set, auto-selected based on pass@k (0.2 for pass@1, 0.6 for pass@4, 0.8 for pass@8). Not supported by gpt-5-mini, gpt-5-nano, gpt-5-pro.",
+    help="Temperature for pass@1 (default: 0.2). Not supported by gpt-5-mini, gpt-5-nano, gpt-5.2-pro.",
+)
+@click.option(
+    "--pass4-temp",
+    default=None,
+    type=float,
+    help="Temperature for pass@4 (default: 0.6). Not supported by gpt-5-mini, gpt-5-nano, gpt-5.2-pro.",
+)
+@click.option(
+    "--pass8-temp",
+    default=None,
+    type=float,
+    help="Temperature for pass@8 (default: 0.8). Not supported by gpt-5-mini, gpt-5-nano, gpt-5.2-pro.",
 )
 @click.option(
     "--reasoning-mode",
     default=None,
-    type=click.Choice(["disabled", "low", "medium", "high"]),
-    help="Reasoning effort level for GPT-5 models. gpt-5-pro only supports 'high'.",
+    type=click.Choice(["disabled", "none", "minimal", "low", "medium", "high", "xhigh"]),
+    help="Reasoning effort level. Use 'disabled'/'none' to turn off reasoning.",
 )
 @click.option(
     "--max-turns",
@@ -152,7 +163,9 @@ def eval_cmd(
     max_samples,
     project_id,
     source_eval_id,
-    temperature,
+    pass1_temp,
+    pass4_temp,
+    pass8_temp,
     reasoning_mode,
     max_turns,
     max_context_window,
@@ -219,7 +232,9 @@ def eval_cmd(
                 max_samples=max_samples,
                 project_id=project_id,
                 source_eval_id=source_eval_id,
-                temperature=temperature,
+                pass1_temp=pass1_temp,
+                pass4_temp=pass4_temp,
+                pass8_temp=pass8_temp,
                 reasoning_mode=reasoning_mode,
                 max_turns=max_turns,
                 max_context_window=max_context_window,
@@ -252,7 +267,9 @@ async def _eval_async(
     project_id: str,
     api_url: str,
     source_eval_id: str | None = None,
-    temperature: float | None = None,
+    pass1_temp: float | None = None,
+    pass4_temp: float | None = None,
+    pass8_temp: float | None = None,
     reasoning_mode: str | None = None,
     max_turns: int | None = None,
     max_context_window: int | None = None,
@@ -271,35 +288,45 @@ async def _eval_async(
 
     project_dir = Path(project_dir)
 
-    # Validate temperature + reasoning_mode compatibility for GPT-5 models
-    _NO_TEMP_MODELS = {"gpt-5-mini", "gpt-5-nano", "gpt-5-pro"}
-    _HIGH_ONLY_REASONING = {"gpt-5-pro"}
+    # Validate temperature + reasoning_mode compatibility for OpenAI models
+    # Per OpenAI docs:
+    #   gpt-5-nano, gpt-5-mini, gpt-5.2-pro: NEVER accept temperature
+    #   gpt-5.2: accepts temperature ONLY with reasoning effort "none" (the default)
+    _NO_TEMP_MODELS = {"gpt-5-mini", "gpt-5-nano", "gpt-5.2-pro"}
+    _VALID_REASONING: dict[str, set[str]] = {
+        "gpt-5-nano": {"minimal", "low", "medium", "high"},
+        "gpt-5-mini": {"minimal", "low", "medium", "high"},
+        "gpt-5.2": {"none", "low", "medium", "high", "xhigh"},
+        "gpt-5.2-pro": {"medium", "high", "xhigh"},
+    }
 
+    any_temp_set = any(t is not None for t in (pass1_temp, pass4_temp, pass8_temp))
     if model and model.startswith("gpt-"):
-        if temperature is not None and model in _NO_TEMP_MODELS:
+        if any_temp_set and model in _NO_TEMP_MODELS:
             raise click.ClickException(
-                f"{model} does not support the --temperature flag. "
+                f"{model} does not support temperature overrides. "
                 "It is a reasoning model that controls its own sampling."
             )
         if (
-            temperature is not None
+            any_temp_set
             and model == "gpt-5.2"
             and reasoning_mode
-            and reasoning_mode != "disabled"
+            and reasoning_mode not in ("disabled", "none")
         ):
             raise click.ClickException(
-                f"{model} does not support --temperature when --reasoning-mode is enabled. "
-                "Remove --temperature or set --reasoning-mode disabled."
+                f"{model} does not support temperature when reasoning is enabled. "
+                "Remove temperature overrides or set --reasoning-mode disabled/none."
             )
         if (
             reasoning_mode
-            and reasoning_mode != "disabled"
-            and model in _HIGH_ONLY_REASONING
-            and reasoning_mode != "high"
+            and reasoning_mode not in ("disabled", "none")
+            and model in _VALID_REASONING
+            and reasoning_mode not in _VALID_REASONING[model]
         ):
+            valid = ", ".join(sorted(_VALID_REASONING[model]))
             raise click.ClickException(
-                f'{model} only supports --reasoning-mode "high". '
-                f'"{reasoning_mode}" is not supported.'
+                f'{model} does not support --reasoning-mode "{reasoning_mode}". '
+                f"Valid modes: {valid}"
             )
 
     # --eval-id mode: reuse files from an existing eval, only need model
@@ -391,7 +418,9 @@ async def _eval_async(
 
         # Only send overrides if explicitly set (let backend/source eval provide defaults)
         _overrides = {
-            "temperature": temperature,
+            "pass1_temp": pass1_temp,
+            "pass4_temp": pass4_temp,
+            "pass8_temp": pass8_temp,
             "reasoning_mode": reasoning_mode,
             "max_turns": max_turns,
             "max_context_window": max_context_window,
@@ -725,9 +754,13 @@ async def _eval_async(
         "max_billing": max_billing,
     }
 
-    # Only send temperature if explicitly set (let backend auto-select based on pass@k)
-    if temperature is not None:
-        request_payload["temperature"] = temperature
+    # Only send per-k temperatures if explicitly set (let backend auto-select based on pass@k)
+    if pass1_temp is not None:
+        request_payload["pass1_temp"] = pass1_temp
+    if pass4_temp is not None:
+        request_payload["pass4_temp"] = pass4_temp
+    if pass8_temp is not None:
+        request_payload["pass8_temp"] = pass8_temp
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         try:

@@ -376,6 +376,11 @@ class ModelConfig(BaseModel):
         alias="_baseModelName",
         description="Internal: Base model name resolved from model ID",
     )
+    resolved_sampler_checkpoint_path: str | None = Field(
+        default=None,
+        alias="_resolvedSamplerCheckpointPath",
+        description="Internal: Sampler checkpoint path for KL reference (sampler_weights/ format)",
+    )
 
 
 class TeacherConfig(BaseModel):
@@ -428,12 +433,13 @@ class RolloutConfig(BaseModel):
         description="Maximum context window in tokens. Rollouts are marked as truncated if conversation exceeds this. Default 32768 (32k).",
     )
     termination_policy: Literal["max_turns", "last_tool"] = "last_tool"
-    reasoning_mode: Literal["disabled", "low", "medium", "high"] | None = Field(
+    reasoning_mode: (
+        Literal["disabled", "none", "minimal", "low", "medium", "high", "xhigh"] | None
+    ) = Field(
         default=None,
         description="Reasoning mode for models that support it. Controls chain-of-thought reasoning. "
-        "Values: 'disabled' (no reasoning), 'low', 'medium', 'high'. Default None (model default). "
-        "For GPU models (gpt-oss, Qwen3, DeepSeek): controls thinking/reasoning effort. "
-        "For OpenAI API (GPT-5): maps to reasoning effort parameter.",
+        "Values: 'disabled'/'none' (no reasoning), 'minimal', 'low', 'medium', 'high', 'xhigh'. "
+        "Default None (model default). Not all models support all levels — see docs for compatibility.",
     )
     mcp_url: str | list[str] | None = Field(
         default=None,
@@ -480,6 +486,16 @@ class EvalTriggerConfig(BaseModel):
     pass1: bool | None = Field(default=None, description="Calculate pass@1 metric")
     pass4: bool | None = Field(default=None, description="Calculate pass@4 metric")
     pass8: bool | None = Field(default=None, description="Calculate pass@8 metric")
+    # Per-pass@k temperatures (Chen et al. 2021 defaults)
+    pass1_temp: float | None = Field(
+        default=None, ge=0, description="Temperature for pass@1 (default: 0.2)"
+    )
+    pass4_temp: float | None = Field(
+        default=None, ge=0, description="Temperature for pass@4 (default: 0.6)"
+    )
+    pass8_temp: float | None = Field(
+        default=None, ge=0, description="Temperature for pass@8 (default: 0.8)"
+    )
 
 
 class TrainerConfig(BaseModel):

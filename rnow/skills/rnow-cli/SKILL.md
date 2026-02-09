@@ -167,43 +167,90 @@ Submit project for training. Supports inline overrides for any config.yml settin
 rnow run [OPTIONS] [OVERRIDES...]
 ```
 
+### Options
+
 | Option | Description |
 |--------|-------------|
 | `-d, --dir PATH` | Project directory (default: current) |
 | `-n, --name NAME` | Custom run name |
-| `-m, --model MODEL` | Override model path |
+| `-m, --model MODEL` | Override model path (base model, finetuned UUID, or OpenAI model) |
 | `-e, --epochs N` | Override number of epochs |
 | `-b, --batch-size N` | Override batch size (1-32) |
 | `--lr RATE` | Override learning rate |
 | `--debug` | Upload files but don't start training |
 
-**Inline overrides** (key=value for any config.yml field):
+### Inline overrides
+
+Any config.yml setting can be overridden with `key=value` arguments. These are applied to the uploaded config (not just in-memory), so the trainer sees the overridden values.
+
 ```bash
+# Model override (same as -m flag)
 rnow run model.path=Qwen/Qwen3-4B-Instruct-2507
+rnow run -m Qwen/Qwen3-4B-Instruct-2507  # equivalent shorthand
+
+# Training overrides
 rnow run data.batch_size=8 data.group_size=16 trainer.num_epochs=5
 rnow run algorithm.adv_estimator=grpo trainer.learning_rate=0.0002
+
+# Rollout overrides (RL only)
 rnow run rollout.max_turns=3 rollout.max_context_window=16384
+rnow run rollout.reasoning_mode=disabled  # Turn off reasoning for hybrid models
+
+# LoRA rank override
+rnow run model.qlora_rank=16
 ```
 
-**Required files:**
+### Common overrides
+
+| Override | Description |
+|----------|-------------|
+| `model.path` | Model to train (e.g., `Qwen/Qwen3-8B`, `Qwen/Qwen3-4B-Instruct-2507`) |
+| `model.qlora_rank` | LoRA rank (default: 32) |
+| `data.batch_size` | Batch size (1-32) |
+| `data.group_size` | Rollouts per prompt for RL (1-64) |
+| `trainer.num_epochs` | Number of training epochs |
+| `trainer.learning_rate` | Learning rate (default: 0.0001) |
+| `algorithm.adv_estimator` | Advantage estimator: `grpo`, `gae`, `reinforce` |
+| `algorithm.loss_fn` | Loss function: `ppo`, `importance_sampling` |
+| `rollout.max_turns` | Max conversation turns for RL |
+| `rollout.max_context_window` | Max context window (default: 32768) |
+| `rollout.reasoning_mode` | Reasoning mode: `disabled`, `none`, `minimal`, `low`, `medium`, `high`, `xhigh` |
+
+### Multi-model training
+
+If `model.path` is a list in config.yml, a separate run is submitted for each model:
+
+```yaml
+model:
+  path:
+    - Qwen/Qwen3-8B
+    - Qwen/Qwen3-4B-Instruct-2507
+    - meta-llama/Llama-3.1-8B-Instruct
+```
+
+### Required files
 - `config.yml` - Configuration
 - `train.jsonl` - Training data
 - `rewards.py` - Reward functions (RL only)
 
-**Optional files:**
+### Optional files
 - `tools.py` - Tool definitions
 - `requirements.txt` - Python dependencies
 
-**Example:**
+### Examples
+
 ```bash
-cd my-project
+# Basic run
 rnow run
 
-# Output:
-# Validating project...
-# Uploading files...
-# Starting run: run_abc123xyz
-# View at: https://www.reinforcenow.ai/runs/run_abc123xyz
+# Override model and epochs
+rnow run -m Qwen/Qwen3-4B-Instruct-2507 -e 3
+
+# Train a finetuned model (continue training from checkpoint)
+rnow run -m 37e6f995-0efd-4fc6-beaa-badb7af94054
+
+# Override multiple settings inline
+rnow run data.batch_size=8 trainer.learning_rate=0.0002 rollout.max_turns=5
 ```
 
 ---
@@ -236,7 +283,7 @@ rnow stop run_abc123xyz --save-model -y
 
 ## rnow test
 
-Test RL rollouts locally before submitting.
+Test RL rollouts before submitting. Runs rollouts via the cloud (Modal), not locally.
 
 ```bash
 rnow test [OPTIONS]
@@ -246,52 +293,40 @@ rnow test [OPTIONS]
 |--------|---------|-------------|
 | `-d, --dir PATH` | . | Project directory |
 | `-n, --num-rollouts N` | 1 | Number of rollouts |
-| `--entry INDICES` | random | Test specific entries (e.g., "0,2,5") |
-| `--model MODEL` | config | Override model for testing |
+| `-e, --entry INDICES` | random | Test specific entries (e.g., `-e 0,2,5` or `-e 0 -e 2 -e 5`) |
+| `--all` | false | Test all entries in train.jsonl |
+| `--model MODEL` | gpt-5-nano | Override model (OpenAI, GPU, or finetuned UUID) |
+| `--max-context-window N` | config | Override max context window |
+
+### Supported models for `--model`
+
+- **OpenAI models**: `gpt-5-nano` (default, fastest), `gpt-5-mini`, `gpt-5.2`, `gpt-5.2-pro`
+- **GPU models**: `Qwen/Qwen3-8B`, `Qwen/Qwen3-4B-Instruct-2507`, etc.
+- **Finetuned models**: UUID (e.g., `37e6f995-0efd-4fc6-beaa-badb7af94054`)
 
 ### Examples
 
-**Basic test:**
 ```bash
+# Basic test (1 rollout, random entry, gpt-5-nano)
 rnow test
-# Runs 1 rollout, shows reward breakdown
-```
 
-**Multiple rollouts:**
-```bash
+# Multiple rollouts
 rnow test -n 5
-```
 
-**Test specific entries:**
-```bash
-rnow test --entry 0,3,7
-# Tests entries at indices 0, 3, and 7 from train.jsonl
-```
+# Test specific entries
+rnow test -e 0,3,7
 
-**Override model:**
-```bash
-rnow test --model gpt-5-nano -n 3
-# Uses gpt-5-nano instead of config.model.path
-```
+# Test all entries
+rnow test --all
 
-### Test Output
+# Override model
+rnow test --model gpt-5.2 -n 3
 
-```
-Rollout 1/3
-Entry: 0
-Prompt: What is 2+2?
+# Test finetuned model
+rnow test --model 37e6f995-0efd-4fc6-beaa-badb7af94054 -n 3
 
-Turn 1:
-  Assistant: The answer is 4.
-
-Rewards:
-  accuracy: 1.0
-  format_check: 1.0
-Total: 1.0
-
----
-Rollout 2/3
-...
+# Test GPU model
+rnow test --model Qwen/Qwen3-8B -n 3
 ```
 
 ---
@@ -334,13 +369,38 @@ Reuses all files from the source eval. Only need to specify `--model`.
 | `--pass8/--no-pass8` | false | Calculate pass@8 |
 | `-n, --max-samples N` | all | Limit number of samples |
 | `-t, --temperature` | auto | Sampling temperature |
-| `--reasoning-mode` | null | `disabled`, `low`, `medium`, `high` |
+| `--reasoning-mode` | null | `disabled`, `none`, `minimal`, `low`, `medium`, `high`, `xhigh` (see below) |
 | `--max-turns` | config | Max conversation turns |
 | `--max-context-window` | config | Max context window tokens |
 | `--termination-policy` | config | `last_tool` or `max_turns` |
 | `--max-tool-response` | config | Max chars in tool response |
 | `--mcp-url` | config | MCP server URL |
 | `--max-billing` | null | Max cost in dollars |
+
+### Reasoning Modes
+
+When `--reasoning-mode` is not set (null), each model uses its default:
+
+| Model Family | Default | Supported Efforts |
+|-------------|---------|-------------------|
+| **GPT-5** (nano, mini) | `medium` (always reasons) | `minimal`, `low`, `medium`, `high` |
+| **GPT-5.2** | `none` (no reasoning) | `none`, `low`, `medium`, `high`, `xhigh` |
+| **GPT-5.2-pro** | `medium` (always reasons) | `medium`, `high`, `xhigh` |
+| **Qwen3 hybrid** (Qwen3-8B, Qwen3-32B) | thinking on | `disabled` to turn off |
+| **DeepSeek** (V3.1) | thinking on | `disabled` to turn off |
+| **GPT-OSS** (gpt-oss-120b, gpt-oss-20b) | `medium` | `disabled`, `low`, `medium`, `high` |
+| **Qwen3 Instruct** / **Llama** | no thinking | N/A (no reasoning support) |
+
+Use `disabled` as the universal "turn off reasoning" value (works for all model types).
+
+### OpenAI Model Compatibility
+
+| Model | Temperature | Default Effort | Supported Efforts |
+|-------|-------------|----------------|-------------------|
+| `gpt-5-nano` | NEVER | `medium` | minimal, low, medium, high |
+| `gpt-5-mini` | NEVER | `medium` | minimal, low, medium, high |
+| `gpt-5.2` | Only with `none` effort | `none` | none, low, medium, high, xhigh |
+| `gpt-5.2-pro` | NEVER | `medium` | medium, high, xhigh |
 
 ### Examples
 
