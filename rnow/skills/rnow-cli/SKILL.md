@@ -1,6 +1,6 @@
 ---
 name: rnow-cli
-description: Use the ReinforceNow CLI for RLHF training. Use when running rnow commands, initializing projects, submitting training runs, testing rollouts, or downloading models.
+description: Use the ReinforceNow CLI for RLHF training. Use when running rnow commands, initializing projects, submitting training runs, testing rollouts, running evals, or downloading models. Triggers on "rnow", "rnow init", "rnow run", "rnow test", "rnow eval", "rnow download", "rnow deploy", "rnow login", "training run".
 ---
 
 # ReinforceNow CLI Reference
@@ -25,6 +25,7 @@ pip install rnow
 | `rnow run` | Submit training run |
 | `rnow stop` | Cancel active run |
 | `rnow test` | Test rollouts locally |
+| `rnow eval` | Run model evaluation (pass@k) |
 | `rnow download` | Download trained model |
 
 ---
@@ -125,12 +126,13 @@ rnow init [OPTIONS]
 | `first-rl` | RL | Starter template for RL |
 | `rl-single` | RL | Single-turn RL with rewards |
 | `rl-tools` | RL | Multi-turn RL with tool calling |
+| `rl-browser` | RL | Browser agent with Playwright |
 | `sft` | SFT | Supervised finetuning |
 | `tutorial-reward` | RL | Learn reward functions |
 | `tutorial-tool` | RL | Learn tool functions |
 | `mcp-tavily` | RL | MCP integration (web search) |
 | `kernel` | RL | VLM browser agent with Kernel |
-| `rl-browser` | RL | Browser agent with Playwright |
+| `skyrl-sql` | RL | SQL reasoning with SkyRL |
 | `off-distill-agent` | SFT | Off-policy distillation |
 | `on-distill-agent` | Distill | On-policy KL distillation |
 | `posttrain` | Midtrain | Continued pretraining |
@@ -154,22 +156,34 @@ rnow init --template tutorial-reward
 | `sft` | config.yml, train.jsonl |
 | `rl-single` | config.yml, train.jsonl, rewards.py, requirements.txt |
 | `rl-tools` | config.yml, train.jsonl, rewards.py, tools.py, requirements.txt |
-| `blank` | config.yml |
 
 ---
 
 ## rnow run
 
-Submit project for training.
+Submit project for training. Supports inline overrides for any config.yml setting.
 
 ```bash
-rnow run [OPTIONS]
+rnow run [OPTIONS] [OVERRIDES...]
 ```
 
 | Option | Description |
 |--------|-------------|
-| `--dir PATH` | Project directory (default: current) |
-| `--name NAME` | Custom run name |
+| `-d, --dir PATH` | Project directory (default: current) |
+| `-n, --name NAME` | Custom run name |
+| `-m, --model MODEL` | Override model path |
+| `-e, --epochs N` | Override number of epochs |
+| `-b, --batch-size N` | Override batch size (1-32) |
+| `--lr RATE` | Override learning rate |
+| `--debug` | Upload files but don't start training |
+
+**Inline overrides** (key=value for any config.yml field):
+```bash
+rnow run model.path=Qwen/Qwen3-4B-Instruct-2507
+rnow run data.batch_size=8 data.group_size=16 trainer.num_epochs=5
+rnow run algorithm.adv_estimator=grpo trainer.learning_rate=0.0002
+rnow run rollout.max_turns=3 rollout.max_context_window=16384
+```
 
 **Required files:**
 - `config.yml` - Configuration
@@ -199,16 +213,23 @@ rnow run
 Cancel an active training run.
 
 ```bash
-rnow stop RUN_ID
+rnow stop RUN_ID [OPTIONS]
 ```
+
+| Option | Description |
+|--------|-------------|
+| `--save-model` | Save model checkpoint before stopping |
+| `-y, --yes` | Skip confirmation |
 
 **Example:**
 ```bash
 rnow stop run_abc123xyz
-# Are you sure you want to stop run_abc123xyz? [y/N]: y
+# Are you sure you want to stop this training run? [y/N]: y
+# Save model checkpoint? [y/N]: n
 # Run stopped.
-# Duration: 2h 15m
-# Cost: $12.50
+
+rnow stop run_abc123xyz --save-model -y
+# Stopping and saving checkpoint...
 ```
 
 ---
@@ -226,39 +247,14 @@ rnow test [OPTIONS]
 | `-d, --dir PATH` | . | Project directory |
 | `-n, --num-rollouts N` | 1 | Number of rollouts |
 | `--entry INDICES` | random | Test specific entries (e.g., "0,2,5") |
-| `--model MODEL` | gpt-5-nano | Override model for testing |
-
-### Available Models
-
-**OpenAI API models (default, fast):**
-- `gpt-5-nano` - Fastest, recommended for quick testing
-- `gpt-5-mini` - Faster
-- `gpt-5.2` - Balanced
-- `gpt-5-pro` - Highest quality
-
-**GPU models (slower, uses actual training infrastructure):**
-
-Text models:
-- `Qwen/Qwen3-8B`
-- `Qwen/Qwen3-32B`
-- `Qwen/Qwen3-30B-A3B`
-- `Qwen/Qwen3-235B-A22B-Instruct-2507`
-- `meta-llama/Llama-3.1-8B-Instruct`
-- `meta-llama/Llama-3.3-70B-Instruct`
-- `deepseek-ai/DeepSeek-V3.1`
-
-**VLM models (for vision tasks with screenshots):**
-- `Qwen/Qwen3-VL-30B-A3B-Instruct` - Vision-language model
-- `Qwen/Qwen3-VL-235B-A22B-Instruct` - Larger VLM
-
-> **Important:** Default `gpt-5-nano` is text-only and cannot process images. For VLM projects that return screenshots (e.g., browser agents), use `--model Qwen/Qwen3-VL-30B-A3B-Instruct` to test with actual vision capabilities.
+| `--model MODEL` | config | Override model for testing |
 
 ### Examples
 
 **Basic test:**
 ```bash
 rnow test
-# Runs 1 rollout with gpt-5-nano (text-only)
+# Runs 1 rollout, shows reward breakdown
 ```
 
 **Multiple rollouts:**
@@ -272,16 +268,10 @@ rnow test --entry 0,3,7
 # Tests entries at indices 0, 3, and 7 from train.jsonl
 ```
 
-**Test with VLM model (for vision/screenshot projects):**
+**Override model:**
 ```bash
-rnow test --model Qwen/Qwen3-VL-30B-A3B-Instruct -n 1
-# Uses actual VLM that can see images
-```
-
-**Test with GPU model:**
-```bash
-rnow test --model Qwen/Qwen3-8B -n 3
-# Uses GPU infrastructure instead of OpenAI API
+rnow test --model gpt-5-nano -n 3
+# Uses gpt-5-nano instead of config.model.path
 ```
 
 ### Test Output
@@ -306,22 +296,96 @@ Rollout 2/3
 
 ---
 
+## rnow eval
+
+Run model evaluation and calculate pass@k metrics.
+
+```bash
+rnow eval [OPTIONS]
+```
+
+**Two modes:**
+
+### 1. From project directory (uploads files)
+
+```bash
+rnow eval --model Qwen/Qwen3-8B --pass1 --pass8
+```
+
+Uses `config.yml`, `train.jsonl`, `rewards.py`, `tools.py` from the project directory.
+
+### 2. From existing eval (reuses files)
+
+```bash
+rnow eval --eval-id cmle8ma5h000004l44thj3t3a --model gpt-5-nano --pass1
+```
+
+Reuses all files from the source eval. Only need to specify `--model`.
+
+### Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `-d, --dir PATH` | . | Project directory |
+| `-m, --model MODEL` | config | Model to evaluate (name or finetuned UUID) |
+| `--eval-id ID` | - | Re-run existing eval with different model |
+| `--pass1/--no-pass1` | true | Calculate pass@1 |
+| `--pass4/--no-pass4` | false | Calculate pass@4 |
+| `--pass8/--no-pass8` | false | Calculate pass@8 |
+| `-n, --max-samples N` | all | Limit number of samples |
+| `-t, --temperature` | auto | Sampling temperature |
+| `--reasoning-mode` | null | `disabled`, `low`, `medium`, `high` |
+| `--max-turns` | config | Max conversation turns |
+| `--max-context-window` | config | Max context window tokens |
+| `--termination-policy` | config | `last_tool` or `max_turns` |
+| `--max-tool-response` | config | Max chars in tool response |
+| `--mcp-url` | config | MCP server URL |
+| `--max-billing` | null | Max cost in dollars |
+
+### Examples
+
+```bash
+# Eval finetuned model on existing eval
+rnow eval --eval-id cmle8ma5h000004l44thj3t3a \
+  --model 37e6f995-0efd-4fc6-beaa-badb7af94054 --pass1
+
+# Eval with reasoning mode
+rnow eval --eval-id cmle8ma5h000004l44thj3t3a \
+  --model gpt-5.2 --reasoning-mode high --pass1 --pass8
+
+# Eval from project directory with overrides
+rnow eval --model Qwen/Qwen3-8B --pass1 --pass8 \
+  --max-turns 5 --temperature 0.8
+
+# Limit to first 50 samples
+rnow eval --eval-id cmxyz123 --model gpt-5-nano \
+  --pass1 --max-samples 50
+```
+
+---
+
 ## rnow download
 
 Download a trained model checkpoint.
 
 ```bash
-rnow download RUN_ID [OPTIONS]
+rnow download MODEL_ID [OPTIONS]
 ```
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `-o, --output DIR` | ./model | Output directory |
+| `-o, --output DIR` | ./<model_name>/ | Output directory |
+| `--keep-archive` | false | Keep the tar archive after extraction |
 
 **Example:**
 ```bash
-rnow download run_abc123xyz -o ./my-model
+rnow download abc123 -o ./my-model
 # Downloading checkpoint...
 # Progress: 100%
 # Saved to: ./my-model/
+
+rnow download abc123 --keep-archive
+# Keeps both extracted files and .tar archive
 ```
+
+---

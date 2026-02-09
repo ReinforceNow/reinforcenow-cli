@@ -94,10 +94,11 @@ trainer:
 ### Full RL Config (All Options)
 
 ```yaml
-# Project identification (auto-filled by rnow init)
+# Project identification (auto-filled on first run)
 project_id: ""
 project_name: "My RL Project"
 dataset_type: rl
+organization_id: ""
 description: "Training description"
 
 # Data configuration
@@ -109,7 +110,7 @@ data:
 
 # Model configuration
 model:
-  path: Qwen/Qwen3-8B           # Model name or checkpoint ID
+  path: Qwen/Qwen3-8B           # Model name or finetuned model UUID
   qlora_rank: 32                # LoRA rank (model-specific max)
   qlora_alpha: 64               # LoRA alpha (default: rank * 2)
   name: "custom-model-name"     # Optional output name
@@ -121,27 +122,31 @@ algorithm:
   adv_estimator: grpo           # 'grpo', 'gae', or 'reinforce'
   kl_penalty_coef: 0.01         # KL divergence penalty
 
-# Rollout configuration (RL only)
+# Rollout configuration (RL and Distillation)
 rollout:
   max_turns: 1                  # Max conversation turns
-  max_context_window: 2048              # Max tokens per generation
+  max_context_window: 32768     # Max context window in tokens (tool results auto-truncated)
   termination_policy: last_tool # 'last_tool' or 'max_turns'
   reasoning_mode: null          # null, 'disabled', 'low', 'medium', 'high'
   mcp_url: null                 # MCP server URL(s)
-  tool_timeout: 60              # Tool execution timeout
-  max_context_window: 32768    # Max context window in tokens (tool results auto-truncated)
+  tool_timeout: 60              # Tool execution timeout (seconds)
+  reward_timeout: 60            # Reward execution timeout (seconds)
+  max_tool_response: null       # Max tokens for tool responses (null = no limit)
   include_thinking: false       # Include <think> in history
+  rollout_timeout: null         # Hard wall-clock deadline per rollout (null = 1hr safety net)
 
 # Training configuration
 trainer:
   num_epochs: 30                # Number of epochs
   learning_rate: 0.0001         # Learning rate
-  save_step: 20                 # -1 = end only, 0 = never, N = every N steps
+  save_step: -1                 # -1 = end only, N = every N steps
+  max_billing: 10.0             # Optional: max dollars for this run
 
 # Run-dependent evals (optional, top-level)
 evals:
-  - eval_id: your_eval_id       # From rnow eval
+  - eval_id: your_eval_id       # From standalone eval
     step: 100                   # Run every 100 steps
+    name: "MATH"                # Display name in graphs (optional)
 ```
 
 ## Configuration Sections
@@ -161,23 +166,27 @@ evals:
 
 | Field | Required | Default | Description |
 |-------|----------|---------|-------------|
-| `path` | Yes | - | Model name or checkpoint ID |
+| `path` | Yes | - | Model name or finetuned model UUID |
 | `qlora_rank` | No | 32 | LoRA rank for efficient finetuning |
 | `qlora_alpha` | No | rank * 2 | LoRA alpha scaling |
+| `name` | No | auto | Custom name for the output model |
+| `description` | No | - | Custom description for the output model |
 
 #### Supported Models
 
 **Qwen (Text)**
 - `Qwen/Qwen3-8B` (max rank: 128)
+- `Qwen/Qwen3-8B-Base` (max rank: 128)
 - `Qwen/Qwen3-4B-Instruct-2507` (max rank: 128)
-- `Qwen/Qwen3-30B-A3B` (max rank: 64)
-- `Qwen/Qwen3-30B-A3B-Instruct-2507` (max rank: 64)
 - `Qwen/Qwen3-32B` (max rank: 128)
+- `Qwen/Qwen3-30B-A3B` (max rank: 64)
+- `Qwen/Qwen3-30B-A3B-Base` (max rank: 64)
+- `Qwen/Qwen3-30B-A3B-Instruct-2507` (max rank: 64)
 - `Qwen/Qwen3-235B-A22B-Instruct-2507` (max rank: 64)
 
 **Qwen (Vision)**
-- `Qwen/Qwen3-VL-30B-A3B-Instruct`
-- `Qwen/Qwen3-VL-235B-A22B-Instruct`
+- `Qwen/Qwen3-VL-30B-A3B-Instruct` (max rank: 64)
+- `Qwen/Qwen3-VL-235B-A22B-Instruct` (max rank: 64)
 
 **Meta Llama** (max rank: 128)
 - `meta-llama/Llama-3.3-70B-Instruct`
@@ -195,8 +204,10 @@ evals:
 - `openai/gpt-oss-120b`
 - `openai/gpt-oss-20b`
 
-**Moonshot**
+**Moonshot** (max rank: 32)
 - `moonshotai/Kimi-K2-Thinking`
+
+**Models without tool support:** `openai/gpt-oss-*`, all `*-Base` models, `meta-llama/Llama-3.1-70B`, `meta-llama/Llama-3.1-8B`, `meta-llama/Llama-3.2-3B`, `meta-llama/Llama-3.2-1B`
 
 #### Multi-Model Training
 
@@ -215,15 +226,17 @@ The CLI submits separate runs for each model.
 
 ### teacher (Distillation only)
 
-| Field | Required | Description |
-|-------|----------|-------------|
-| `path` | Yes | Teacher model name (must be a supported model) |
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `path` | Yes | - | Teacher model name (must be a supported model) |
+| `agentic` | No | false | Enable agentic distillation with multi-turn tool support |
 
 The teacher provides supervision via reverse KL divergence. Use a larger/more capable model as teacher:
 
 ```yaml
 teacher:
   path: Qwen/Qwen3-32B  # 32B teacher distilling to 8B student
+  agentic: true          # Enable if using tools.py
 ```
 
 **Teacher selection tips:**
@@ -231,7 +244,7 @@ teacher:
 - Larger teachers generally produce better students
 - Teacher must be a supported model (see model list above)
 
-### algorithm (RL only)
+### algorithm (RL and Distillation)
 
 | Field | Default | Options |
 |-------|---------|---------|
@@ -249,13 +262,15 @@ teacher:
 | Field | Default | Description |
 |-------|---------|-------------|
 | `max_turns` | 1 | Max conversation turns |
-| `max_context_window` | 2048 | Max tokens per generation |
+| `max_context_window` | 32768 | Max context window in tokens |
 | `termination_policy` | last_tool | When to end episode |
 | `reasoning_mode` | null | Chain-of-thought mode |
 | `mcp_url` | null | MCP server URL(s) |
-| `tool_timeout` | 60 | Tool execution timeout |
-| `max_context_window` | 32768 | Max context window in tokens |
+| `tool_timeout` | 60 | Tool execution timeout (seconds) |
+| `reward_timeout` | 60 | Reward execution timeout (seconds) |
+| `max_tool_response` | null | Max tokens for tool responses (null = no limit) |
 | `include_thinking` | false | Keep `<think>` in history |
+| `rollout_timeout` | null | Hard wall-clock deadline per rollout (null = 1hr safety net) |
 
 #### Termination Policies
 
@@ -303,39 +318,61 @@ rollout:
 | Field | Required | Default | Description |
 |-------|----------|---------|-------------|
 | `num_epochs` | Yes | - | Number of training epochs |
-| `learning_rate` | Yes | - | Learning rate |
-| `save_step` | No | -1 | -1 = end only, 0 = never save, N = every N steps |
+| `learning_rate` | Yes | 0.0001 | Learning rate |
+| `save_step` | No | -1 | -1 = end only, N = every N steps |
+| `max_billing` | No | null | Max dollars for this run |
 
 ### evals (top-level)
 
-Run-dependent evaluations that trigger during training. First create an eval with `rnow eval`, then reference its ID in your config.
+Run-dependent evaluations that trigger automatically during training. These run in separate containers and log pass@k metrics to training graphs.
 
-| Field | Required | Description |
-|-------|----------|-------------|
-| `eval_id` | Yes | Eval ID from `rnow eval` (copy from eval detail page) |
-| `step` | Yes | Run eval every N training steps |
+**Setup:**
+1. Create a standalone eval first using the UI or API
+2. Note its `eval_id` from the evals page
+3. Reference it in your config.yml
 
 ```yaml
-# Example: evals as top-level section
-trainer:
-  num_epochs: 10
-  learning_rate: 0.0001
-
 evals:
-  - eval_id: cmla1l13e000004jwxu39jrpy  # Copy from eval page
+  - eval_id: cmla1l13e000004jwxu39jrpy  # From standalone eval
     step: 100                            # Run every 100 steps
-  - eval_id: another_eval_id
-    step: 200                            # Different interval
+    name: "MATH"                         # Display name in graphs (optional)
 ```
 
-**How it works:**
-1. Run `rnow eval` to create an evaluation (uploads train.jsonl, rewards.py to S3)
-2. Copy the Eval ID from the eval detail page
-3. Add the eval to the `evals` section in config.yml (top-level, not inside trainer)
-4. During training, evals spawn asynchronously (don't block training)
-5. Pass@k scores appear in your training graphs under the "Evaluation" section
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `eval_id` | Yes | - | Source eval ID (must exist) |
+| `step` | Yes | - | Run eval every N training steps |
+| `name` | No | eval_id[:8] | Display name for metrics in graphs |
+| `pass1` | No | inherited | Override pass@1 metric |
+| `pass4` | No | inherited | Override pass@4 metric |
+| `pass8` | No | inherited | Override pass@8 metric |
 
-**Note:** Evals run in separate sandboxes and don't slow down training.
+**How it works:**
+- Trainer spawns eval in a separate Modal container at each step interval
+- Eval reuses source eval's files from S3 (train.jsonl, rewards.py, config)
+- Does NOT create new Eval records - just logs metrics
+- pass@k scores appear in "Evaluation" section of training graphs
+
+**pass@k configuration:**
+The pass@1, pass@4, pass@8 metrics are configured on the **source eval** when you create it. Run-dependent evals inherit these settings unless overridden. Only enabled metrics appear in graphs.
+
+**Graph display:**
+```
+Section: "Evaluation"
+Graphs:  "MATH_pass1", "MATH_pass4", "MATH_pass8"
+         (or "cmla1l13_pass1" etc. if no name specified)
+```
+
+**Multiple evals example:**
+```yaml
+evals:
+  - eval_id: abc123...
+    step: 50
+    name: "MATH"
+  - eval_id: xyz789...
+    step: 100
+    name: "GSM8K"
+```
 
 ---
 
@@ -535,7 +572,7 @@ model:
 
 rollout:
   max_turns: 5
-  max_context_window: 2048
+  max_context_window: 32768
   termination_policy: last_tool
   tool_timeout: 30
 
@@ -560,7 +597,7 @@ model:
 
 rollout:
   max_turns: 3
-  max_context_window: 4096
+  max_context_window: 32768
   tool_timeout: 120  # Longer for code execution
 
 trainer:
@@ -629,8 +666,8 @@ trainer:
 3. **Rewards in train.jsonl must exist in rewards.py** (RL only)
 4. **Tools in train.jsonl must exist in tools.py** (RL only)
 5. **sandbox=True requires docker field** (RL only)
-6. **max_tokens must fit in context window**
-7. **Distillation requires teacher section** with valid model path
+6. **Distillation requires teacher section** with valid model path
+7. **save_step cannot be 0** (use -1 for end-only, or positive number)
 
 ## Testing Configuration
 

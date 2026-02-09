@@ -2,7 +2,7 @@
 
 import click
 
-from rnow.cli.commands import deploy, download, init, login, logout, orgs, run, status, stop
+from rnow.cli.commands import download, init, login, logout, orgs, run, status, stop
 from rnow.cli.eval import eval_cmd
 from rnow.cli.test import test
 
@@ -38,7 +38,6 @@ cli.add_command(init)
 cli.add_command(run)
 cli.add_command(stop)
 cli.add_command(download)
-cli.add_command(deploy)
 cli.add_command(test)
 cli.add_command(eval_cmd, name="eval")
 

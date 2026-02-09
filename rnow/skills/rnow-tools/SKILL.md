@@ -29,6 +29,32 @@ def my_tool(query: str, limit: int = 10) -> dict:
     return {"results": [...]}
 ```
 
+## ToolArgs for Metadata Access
+
+Tools can accept a `ToolArgs` parameter to access entry metadata:
+
+```python
+from rnow.core.tool import tool
+from rnow.models import ToolArgs
+
+@tool
+def sql(args: ToolArgs, query: str) -> str:
+    """Execute SQL query against the entry's database.
+
+    Args:
+        query: SQL query to execute
+    """
+    db_id = args.metadata["db_id"]
+    # Use db_id to connect to the right database
+    return execute_query(db_id, query)
+```
+
+| Field | Description | Example |
+|-------|-------------|---------|
+| `args.metadata` | Dict from `metadata` field in train.jsonl | `args.metadata["db_id"]` |
+
+**Note:** Unlike rewards, tools access secrets via `os.environ` (they're injected as env vars in the sandbox), not via `args.secrets`.
+
 ## Stateless Tools
 
 For tools that don't modify state (API calls, calculations):
@@ -128,7 +154,8 @@ rollout:
   max_turns: 5              # Max tool calls before final response
   termination_policy: last_tool  # End when model responds without tool call
   tool_timeout: 60          # Per-tool execution timeout (seconds)
-  max_context_window: 32768      # Max context window in tokens (tool results auto-truncated)
+  max_context_window: 32768 # Max context window in tokens (tool results auto-truncated)
+  max_tool_response: null   # Max tokens for tool responses (null = no limit)
 ```
 
 For full config options, see the **rnow-config** skill.

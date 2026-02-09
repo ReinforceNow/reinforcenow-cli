@@ -87,6 +87,54 @@ console = Console()
     help="Re-run an existing eval with a different model. Reuses all files (train.jsonl, rewards.py, tools.py) from the source eval.",
 )
 @click.option(
+    "--temperature",
+    "-t",
+    default=None,
+    type=float,
+    help="Sampling temperature. If not set, auto-selected based on pass@k (0.2 for pass@1, 0.6 for pass@4, 0.8 for pass@8). Not supported by gpt-5-mini, gpt-5-nano, gpt-5-pro.",
+)
+@click.option(
+    "--reasoning-mode",
+    default=None,
+    type=click.Choice(["disabled", "low", "medium", "high"]),
+    help="Reasoning effort level for GPT-5 models. gpt-5-pro only supports 'high'.",
+)
+@click.option(
+    "--max-turns",
+    default=None,
+    type=int,
+    help="Max conversation turns per rollout. Overrides config.yml rollout.max_turns.",
+)
+@click.option(
+    "--max-context-window",
+    default=None,
+    type=int,
+    help="Max context window in tokens. Overrides config.yml rollout.max_context_window.",
+)
+@click.option(
+    "--termination-policy",
+    default=None,
+    type=click.Choice(["last_tool", "max_turns"]),
+    help="When to end rollout. Overrides config.yml rollout.termination_policy.",
+)
+@click.option(
+    "--max-tool-response",
+    default=None,
+    type=int,
+    help="Max characters in tool response. Overrides config.yml rollout.max_tool_response.",
+)
+@click.option(
+    "--mcp-url",
+    default=None,
+    help="MCP server URL for browser automation. Overrides config.yml rollout.mcp_url.",
+)
+@click.option(
+    "--max-billing",
+    default=None,
+    type=float,
+    help="Max cost in dollars for this eval. Overrides config.yml trainer.max_billing.",
+)
+@click.option(
     "--api-url",
     envvar="RNOW_API_URL",
     default=None,
@@ -104,6 +152,14 @@ def eval_cmd(
     max_samples,
     project_id,
     source_eval_id,
+    temperature,
+    reasoning_mode,
+    max_turns,
+    max_context_window,
+    termination_policy,
+    max_tool_response,
+    mcp_url,
+    max_billing,
     api_url,
 ):
     """Run model evaluation and calculate pass@k metrics.
@@ -163,6 +219,14 @@ def eval_cmd(
                 max_samples=max_samples,
                 project_id=project_id,
                 source_eval_id=source_eval_id,
+                temperature=temperature,
+                reasoning_mode=reasoning_mode,
+                max_turns=max_turns,
+                max_context_window=max_context_window,
+                termination_policy=termination_policy,
+                max_tool_response=max_tool_response,
+                mcp_url=mcp_url,
+                max_billing=max_billing,
                 api_url=resolved_api_url,
                 openai_api_key=openai_api_key,
                 start_time=start_time,
@@ -188,6 +252,14 @@ async def _eval_async(
     project_id: str,
     api_url: str,
     source_eval_id: str | None = None,
+    temperature: float | None = None,
+    reasoning_mode: str | None = None,
+    max_turns: int | None = None,
+    max_context_window: int | None = None,
+    termination_policy: str | None = None,
+    max_tool_response: int | None = None,
+    mcp_url: str | None = None,
+    max_billing: float | None = None,
     openai_api_key: str | None = None,
     start_time: float | None = None,
 ):
@@ -198,6 +270,37 @@ async def _eval_async(
         start_time = time.time()
 
     project_dir = Path(project_dir)
+
+    # Validate temperature + reasoning_mode compatibility for GPT-5 models
+    _NO_TEMP_MODELS = {"gpt-5-mini", "gpt-5-nano", "gpt-5-pro"}
+    _HIGH_ONLY_REASONING = {"gpt-5-pro"}
+
+    if model and model.startswith("gpt-"):
+        if temperature is not None and model in _NO_TEMP_MODELS:
+            raise click.ClickException(
+                f"{model} does not support the --temperature flag. "
+                "It is a reasoning model that controls its own sampling."
+            )
+        if (
+            temperature is not None
+            and model == "gpt-5.2"
+            and reasoning_mode
+            and reasoning_mode != "disabled"
+        ):
+            raise click.ClickException(
+                f"{model} does not support --temperature when --reasoning-mode is enabled. "
+                "Remove --temperature or set --reasoning-mode disabled."
+            )
+        if (
+            reasoning_mode
+            and reasoning_mode != "disabled"
+            and model in _HIGH_ONLY_REASONING
+            and reasoning_mode != "high"
+        ):
+            raise click.ClickException(
+                f'{model} only supports --reasoning-mode "high". '
+                f'"{reasoning_mode}" is not supported.'
+            )
 
     # --eval-id mode: reuse files from an existing eval, only need model
     if source_eval_id:
@@ -285,6 +388,21 @@ async def _eval_async(
             "model": model,
             "use_gpu": use_gpu,
         }
+
+        # Only send overrides if explicitly set (let backend/source eval provide defaults)
+        _overrides = {
+            "temperature": temperature,
+            "reasoning_mode": reasoning_mode,
+            "max_turns": max_turns,
+            "max_context_window": max_context_window,
+            "termination_policy": termination_policy,
+            "max_tool_response": max_tool_response,
+            "mcp_url": mcp_url,
+            "max_billing": max_billing,
+        }
+        for key, val in _overrides.items():
+            if val is not None:
+                request_payload[key] = val
 
         if max_samples:
             request_payload["num_samples"] = max_samples
@@ -480,13 +598,19 @@ async def _eval_async(
             "Set it in .env or use a GPU model (e.g., --model Qwen/Qwen3-8B)"
         )
 
-    # Get rollout settings from config
-    max_context_window = config.rollout.max_context_window if config.rollout else 32768
-    max_turns = config.rollout.max_turns if config.rollout else 1
-    termination_policy = config.rollout.termination_policy if config.rollout else "last_tool"
-    max_tool_response = config.rollout.max_tool_response if config.rollout else None
-    mcp_url = config.rollout.mcp_url if config.rollout else None
-    reasoning_mode = config.rollout.reasoning_mode if config.rollout else None
+    # Get rollout settings from config, CLI flags override
+    if max_context_window is None:
+        max_context_window = config.rollout.max_context_window if config.rollout else 32768
+    if max_turns is None:
+        max_turns = config.rollout.max_turns if config.rollout else 1
+    if termination_policy is None:
+        termination_policy = config.rollout.termination_policy if config.rollout else "last_tool"
+    if max_tool_response is None:
+        max_tool_response = config.rollout.max_tool_response if config.rollout else None
+    if mcp_url is None:
+        mcp_url = config.rollout.mcp_url if config.rollout else None
+    if reasoning_mode is None:
+        reasoning_mode = config.rollout.reasoning_mode if config.rollout else None
 
     # Build metrics string for display
     metrics_str = []
@@ -593,13 +717,17 @@ async def _eval_async(
         "model": model,
         "max_context_window": max_context_window,
         "max_turns": max_turns,
-        "temperature": 1.0,  # Use temp=1.0 for evaluation
         "termination_policy": termination_policy,
         "max_tool_response": max_tool_response,
         "mcp_url": mcp_url,
         "reasoning_mode": reasoning_mode,
         "use_gpu": use_gpu,
+        "max_billing": max_billing,
     }
+
+    # Only send temperature if explicitly set (let backend auto-select based on pass@k)
+    if temperature is not None:
+        request_payload["temperature"] = temperature
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         try:
